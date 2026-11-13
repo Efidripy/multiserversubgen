@@ -163,6 +163,7 @@ class TelegramSettings:
     reminder_worker_enabled: bool
     reminder_worker_interval_sec: int
     drift_scan_interval_sec: int
+    drift_auto_sync: bool
     local_proxy_url: str
     polling_timeout_sec: int
     customer_active_icon_custom_emoji_id: str
@@ -239,6 +240,7 @@ def _load_telegram_settings() -> TelegramSettings:
             reminder_worker_enabled=False,
             reminder_worker_interval_sec=3600,
             drift_scan_interval_sec=900,
+            drift_auto_sync=_env_bool("TELEGRAM_DRIFT_AUTO_SYNC", "1"),
             local_proxy_url=local_proxy_url,
             polling_timeout_sec=25,
             customer_active_icon_custom_emoji_id="",
@@ -314,6 +316,7 @@ def _load_telegram_settings() -> TelegramSettings:
         reminder_worker_enabled=reminder_requested,
         reminder_worker_interval_sec=reminder_worker_interval_sec,
         drift_scan_interval_sec=drift_scan_interval_sec,
+        drift_auto_sync=_env_bool("TELEGRAM_DRIFT_AUTO_SYNC", "1"),
         local_proxy_url=local_proxy_url,
         polling_timeout_sec=polling_timeout_sec,
         customer_active_icon_custom_emoji_id=customer_active_icon_custom_emoji_id,

@@ -298,5 +298,9 @@ def test_telegram_drift_scan_interval_settings(monkeypatch):
     monkeypatch.setenv("TELEGRAM_PUBLIC_BASE_URL", "https://bot.example.test")
     monkeypatch.delenv("TELEGRAM_DRIFT_SCAN_INTERVAL_SEC", raising=False)
     assert load_app_settings(parse_mfa_users=_parse_mfa_users).telegram.drift_scan_interval_sec == 900
+    monkeypatch.delenv("TELEGRAM_DRIFT_AUTO_SYNC", raising=False)
+    assert load_app_settings(parse_mfa_users=_parse_mfa_users).telegram.drift_auto_sync is True
+    monkeypatch.setenv("TELEGRAM_DRIFT_AUTO_SYNC", "0")
+    assert load_app_settings(parse_mfa_users=_parse_mfa_users).telegram.drift_auto_sync is False
     monkeypatch.setenv("TELEGRAM_DRIFT_SCAN_INTERVAL_SEC", "0")
     assert load_app_settings(parse_mfa_users=_parse_mfa_users).telegram.drift_scan_interval_sec == 0

@@ -600,3 +600,202 @@ def test_ignored_missing_finding_does_not_pin_binding_after_client_returns(tmp_p
     with connect(db_path) as conn:
         assert conn.execute("SELECT management_state FROM customer_node_bindings").fetchone()[0] == "confirmed"
         assert conn.execute("SELECT status FROM telegram_drift_findings").fetchone()[0] == "resolved"
+
+class _AutoDriftManager:
+    def __init__(self, rows=None):
+        self.rows = rows or []
+        self.offline = False
+
+    def get_node_clients_strict(self, node):
+        if self.offline:
+            raise RuntimeError("offline")
+        return self.rows
+
+
+def test_auto_drift_forgets_missing_after_two_scans(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=_AutoDriftManager())
+    scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 1
+    scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 0
+        assert conn.execute("SELECT status FROM telegram_drift_findings").fetchone()[0] == "resolved"
+        assert conn.execute("SELECT actor_type, actor_id FROM telegram_audit_log WHERE event_type = 'drift_binding_auto_forgotten'").fetchone()[:] == ("system", "drift_scan")
+
+
+def test_auto_drift_adopts_orphan_after_two_scans(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("DELETE FROM customer_node_bindings")
+    remote = {"id": "new-client", "subId": "new-sub", "email": "ops-user", "flow": "xtls-rprx-vision", "inbound_id": 1}
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=_AutoDriftManager([remote]))
+    scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 0
+    scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT source, management_state FROM customer_node_bindings").fetchone()[:] == ("admin_confirmed", "confirmed")
+        assert conn.execute("SELECT status FROM telegram_drift_findings").fetchone()[0] == "adopted"
+        assert conn.execute("SELECT actor_type, actor_id FROM telegram_audit_log WHERE event_type = 'drift_binding_auto_adopted'").fetchone()[:] == ("system", "drift_scan")
+
+
+def test_auto_drift_unavailable_does_not_change_binding(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    manager = _AutoDriftManager()
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=manager)
+    scanner.scan_if_idle()
+    manager.offline = True
+    assert scanner.scan_if_idle()[0].unavailable_node_ids == (1,)
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 1
+        assert conn.execute("SELECT json_extract(details_json, '$.seen_scans') FROM telegram_drift_findings").fetchone()[0] == 1
+
+
+def test_auto_drift_keeps_busy_binding(tmp_path):
+    db_path, registry, customer_id = _customer_with_binding(tmp_path)
+    preview = registry.preview_customer_operation(customer_id=customer_id, operation_type="suspend")
+    registry.queue_customer_operation(customer_id=customer_id, operation_type="suspend", expected_customer_version=preview.expected_customer_version,
+                                      target_snapshot_digest=preview.target_snapshot_digest, idempotency_key="busy-auto", created_by="admin")
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=_AutoDriftManager())
+    scanner.scan_if_idle()
+    scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 1
+        assert conn.execute("SELECT status FROM telegram_drift_findings").fetchone()[0] == "open"
+
+
+def test_auto_drift_disabled_and_conflict(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    manager = _AutoDriftManager()
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=manager, auto_sync=False)
+    scanner.scan_if_idle()
+    scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 1
+    manager.rows = [{"id": "other", "subId": "other", "email": "ops-user", "flow": "xtls-rprx-vision", "inbound_id": 1}]
+    scanner._auto_sync = True
+    scanner.scan_if_idle()
+    scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state FROM customer_node_bindings").fetchone()[0] == "conflict"
+        assert conn.execute("SELECT status FROM telegram_drift_findings WHERE kind = 'binding_conflict'").fetchone()[0] == "open"
+
+
+def test_drift_auto_missing_two_scans(tmp_path):
+    db, registry, _ = _customer_with_binding(tmp_path)
+    class Manager:
+        def get_node_clients_strict(self, node):
+            return []
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
+    scanner.scan_if_idle()
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 1
+    scanner.scan_if_idle()
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 0
+        assert conn.execute("SELECT status FROM telegram_drift_findings").fetchone()[0] == "resolved"
+        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_auto_forgotten' AND actor_type = 'system' AND actor_id = 'drift_scan'").fetchone()[0] == 1
+
+
+def test_drift_auto_orphan_two_scans(tmp_path):
+    db, registry, _ = _customer_with_binding(tmp_path)
+    with connect(db) as conn:
+        conn.execute("DELETE FROM customer_node_bindings")
+    class Manager:
+        def get_node_clients_strict(self, node):
+            return [{"id": "manual", "subId": "sub", "email": "ops-user", "inbound_id": 1, "flow": "xtls-rprx-vision"}]
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
+    scanner.scan_if_idle()
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 0
+    scanner.scan_if_idle()
+    with connect(db) as conn:
+        assert conn.execute("SELECT source, management_state FROM customer_node_bindings").fetchone() == ("admin_confirmed", "confirmed")
+        assert conn.execute("SELECT status FROM telegram_drift_findings").fetchone()[0] == "adopted"
+        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_auto_adopted' AND actor_type = 'system' AND actor_id = 'drift_scan'").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("mode", ["offline", "busy", "disabled", "conflict"])
+def test_drift_auto_protected_cases(tmp_path, mode):
+    db, registry, customer = _customer_with_binding(tmp_path)
+    if mode == "busy":
+        preview = registry.preview_customer_operation(customer_id=customer, operation_type="suspend")
+        registry.queue_customer_operation(customer_id=customer, operation_type="suspend", expected_customer_version=preview.expected_customer_version,
+            target_snapshot_digest=preview.target_snapshot_digest, idempotency_key="busy", created_by="admin")
+    class Manager:
+        def get_node_clients_strict(self, node):
+            if mode == "offline":
+                raise RuntimeError("offline")
+            if mode == "conflict":
+                return [{"id": "different", "subId": "sub", "email": "ops-user", "inbound_id": 1}]
+            return []
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager(), auto_sync=mode != "disabled")
+    scanner.scan_if_idle()
+    scanner.scan_if_idle()
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type LIKE 'drift_binding_auto_%'").fetchone()[0] == 0
+
+
+def test_auto_drift_resets_count_when_missing_disappears(tmp_path):
+    db, registry, _ = _customer_with_binding(tmp_path)
+    manager = _AutoDriftManager()
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=manager)
+    scanner.scan_if_idle()
+    manager.rows = [{"id": "remote-1", "subId": "sub-1", "email": "ops-user", "inbound_id": 1}]
+    scanner.scan_if_idle()
+    manager.rows = []
+    scanner.scan_if_idle()
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 1
+        assert conn.execute("SELECT json_extract(details_json, '$.seen_scans') FROM telegram_drift_findings").fetchone()[0] == 1
+
+
+def test_drift_syncs_enabled_in_both_directions(tmp_path):
+    db, registry, customer = _customer_with_binding(tmp_path)
+    preview = registry.preview_customer_operation(customer_id=customer, operation_type="suspend")
+    registry.queue_customer_operation(customer_id=customer, operation_type="suspend", expected_customer_version=preview.expected_customer_version,
+        target_snapshot_digest=preview.target_snapshot_digest, idempotency_key="finished-enabled", created_by="admin")
+    with connect(db) as conn:
+        operation_id = conn.execute("SELECT id FROM telegram_customer_operations").fetchone()[0]
+        conn.execute("UPDATE telegram_customer_operations SET dismissed_at = CURRENT_TIMESTAMP WHERE id = ?", (operation_id,))
+        conn.execute("UPDATE customer_node_bindings SET last_enabled = 0, suspended_by_operation_id = ?", (operation_id,))
+        version = conn.execute("SELECT row_version FROM customer_node_bindings").fetchone()[0]
+    remote = {"id": "remote-1", "subId": "sub-1", "email": "ops-user", "inbound_id": 1, "enable": False}
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=_AutoDriftManager([remote]))
+    scanner.scan_if_idle()
+    with connect(db) as conn:
+        assert conn.execute("SELECT desired_enabled, last_enabled, suspended_by_operation_id, row_version FROM customer_node_bindings").fetchone() == (0, 1, operation_id, version + 1)
+        assert conn.execute("SELECT actor_type, actor_id, entity_type, entity_id FROM telegram_audit_log WHERE event_type = 'drift_binding_enabled_synced'").fetchone() == ("system", "drift_scan", "customer_node_binding", "1")
+    remote["enable"] = True
+    scanner.scan_if_idle()
+    scanner.scan_if_idle()
+    with connect(db) as conn:
+        assert conn.execute("SELECT desired_enabled, last_enabled, suspended_by_operation_id, row_version FROM customer_node_bindings").fetchone() == (1, 1, None, version + 2)
+        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_enabled_synced'").fetchone()[0] == 2
+
+
+@pytest.mark.parametrize("mode", ["queued", "running", "partial", "disabled", "offline", "identity", "unconfirmed"])
+def test_drift_enabled_sync_skips_protected_bindings(tmp_path, mode):
+    db, registry, customer = _customer_with_binding(tmp_path)
+    if mode in ("queued", "running", "partial"):
+        preview = registry.preview_customer_operation(customer_id=customer, operation_type="suspend")
+        registry.queue_customer_operation(customer_id=customer, operation_type="suspend", expected_customer_version=preview.expected_customer_version,
+            target_snapshot_digest=preview.target_snapshot_digest, idempotency_key="busy-enabled", created_by="admin")
+        with connect(db) as conn:
+            conn.execute("UPDATE telegram_customer_operations SET status = ?", (mode,))
+    if mode == "unconfirmed":
+        with connect(db) as conn:
+            conn.execute("UPDATE customer_node_bindings SET management_state = 'conflict'")
+    remote = {"id": "remote-1", "subId": "sub-1", "email": "ops-user", "inbound_id": 1, "enable": False}
+    if mode == "identity":
+        remote["email"] = "OPS-USER"
+    manager = _AutoDriftManager([remote])
+    manager.offline = mode == "offline"
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=manager, auto_sync=mode != "disabled")
+    scanner.scan_if_idle()
+    with connect(db) as conn:
+        assert conn.execute("SELECT desired_enabled, last_enabled FROM customer_node_bindings").fetchone() == (1, 1)
+        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_enabled_synced'").fetchone()[0] == 0

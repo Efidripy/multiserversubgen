@@ -731,12 +731,20 @@ export const TelegramAdmin: React.FC = () => {
     }
   };
 
-  const runDriftScan = async () => {
+  // One button: reread our data AND compare with the real panels (read-only node scan).
+  const refreshAll = async () => {
     setMutating(true);
+    let scanned = true;
     try {
       await scanDrift();
+    } catch {
+      scanned = false;
+    }
+    try {
+      cacheService.invalidate();
+      await loadActiveDomain();
       setDriftFindings(await listDriftFindings());
-      toast(t('telegram.driftScanDone'), 'success');
+      toast(t(scanned ? 'telegram.refreshDone' : 'telegram.refreshDataOnly'), scanned ? 'success' : 'warning');
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -931,7 +939,7 @@ export const TelegramAdmin: React.FC = () => {
         <div>
             <h2 className="text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">{tabs.find((tab) => tab.id === activeTab)?.label}</h2>
         </div>
-          <button type="button" className={buttonClass} onClick={() => { cacheService.invalidate(); void loadActiveDomain(); }} disabled={loading || mutating} aria-live="polite"><UIIcon name="refresh" size={14} />{t('common.refresh')}</button>
+          <button type="button" className={buttonClass} onClick={() => void refreshAll()} disabled={loading || mutating} aria-live="polite" title={t('telegram.refreshAllHint')}><UIIcon name="refresh" size={14} />{mutating ? t('telegram.refreshing') : t('common.refresh')}</button>
         </div>
       </div>
 
@@ -1224,7 +1232,7 @@ export const TelegramAdmin: React.FC = () => {
           <div className="mt-3 space-y-2">{schedules.length === 0 && <p className="text-[14px] font-light text-slate-500">{t('telegram.noSchedules')}</p>}{schedules.map((schedule) => <article key={schedule.schedule_id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><div><p className="text-[13px] text-slate-300">{schedule.customer_email} · {schedule.operation_type}</p><p className="mt-1 font-mono text-[12px] text-slate-500">{formatDate(schedule.execute_not_before)} · {schedule.status}</p></div>{schedule.status === 'scheduled' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void cancelSchedule(schedule)}>{t('common.cancel')}</button>}</article>)}</div>
         </section>
         <section className={panelClass} aria-label={t('telegram.driftTitle')}>
-          <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-[13px] font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.driftTitle')}</h3><p className="mt-1 text-[13px] text-slate-500">{t('telegram.driftHint')}</p></div><button type="button" className={buttonClass} disabled={mutating} onClick={() => void runDriftScan()}>{t('telegram.driftScan')}</button></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-[13px] font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.driftTitle')}</h3><p className="mt-1 text-[13px] text-slate-500">{t('telegram.driftHint')}</p></div></div>
           <div className="mt-3 space-y-2">{driftFindings.length === 0 && <p className="text-[14px] font-light text-slate-500">{t('telegram.noDrift')}</p>}{driftFindings.map((finding) => <article key={finding.finding_id} className="rounded border border-amber-400/20 bg-[#0a0e1a] p-3"><p className="text-[13px] text-slate-300">{finding.kind} · {finding.node_name}</p><p className="mt-1 font-mono text-[12px] text-slate-500">{finding.customer_email ?? finding.remote_email}</p><div className="mt-2 flex flex-wrap gap-2">{finding.kind === 'orphan_remote' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void resolveDrift(finding, true)}>{t('telegram.driftAdopt')}</button>}<button type="button" className={buttonClass} disabled={mutating} onClick={() => void resolveDrift(finding)}>{t('telegram.driftIgnore')}</button></div></article>)}</div>
         </section>
       </div>}

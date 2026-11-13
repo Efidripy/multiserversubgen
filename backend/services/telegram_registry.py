@@ -7167,6 +7167,34 @@ class TelegramRegistry:
             raise TelegramRegistryError("unsupported customer lifecycle operation")
         return value
 
+    @staticmethod
+    def _forget_missing_binding(conn, binding_id: int, *, actor_type: str, actor_id: str) -> bool:
+        row = conn.execute(
+            "SELECT customer_id, node_id, remote_email FROM customer_node_bindings "
+            "WHERE id = ? AND management_state = 'missing'", (binding_id,),
+        ).fetchone()
+        if row is None or conn.execute(
+            "SELECT 1 FROM telegram_customer_operation_attempts a "
+            "JOIN telegram_customer_operations o ON o.id = a.operation_id "
+            "WHERE a.binding_id = ? AND o.status IN ('queued', 'running', 'partial') "
+            "AND o.dismissed_at IS NULL LIMIT 1", (binding_id,),
+        ).fetchone():
+            return False
+        conn.execute("DELETE FROM telegram_customer_operation_attempts WHERE binding_id = ?", (binding_id,))
+        conn.execute(
+            "UPDATE telegram_drift_findings SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, "
+            "row_version = row_version + 1 WHERE customer_id = ? AND node_id = ? "
+            "AND kind = 'binding_missing' AND status IN ('open', 'ignored') "
+            "AND lower(remote_email) = lower(?)", (row[0], row[1], row[2] or ""),
+        )
+        conn.execute("DELETE FROM customer_node_bindings WHERE id = ?", (binding_id,))
+        event = "drift_binding_auto_forgotten" if actor_type == "system" else "binding_forgotten"
+        conn.execute(
+            "INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id) "
+            "VALUES (?, ?, ?, 'customer_node_binding', ?)", (event, actor_type, actor_id, str(binding_id)),
+        )
+        return True
+
     def forget_missing_bindings(self, customer_id: int, actor: str) -> dict[str, Any]:
         """Drop bindings marked 'missing' (client is gone from the panel and the admin does not want it back).
 
@@ -7185,28 +7213,9 @@ class TelegramRegistry:
                 (customer_id,),
             ).fetchall()
             for binding_id, node_id, remote_email, name in rows:
-                in_flight = conn.execute(
-                    "SELECT 1 FROM telegram_customer_operation_attempts a "
-                    "JOIN telegram_customer_operations o ON o.id = a.operation_id "
-                    "WHERE a.binding_id = ? AND o.status IN ('queued', 'running', 'partial') "
-                    "AND o.dismissed_at IS NULL LIMIT 1", (binding_id,),
-                ).fetchone()
-                if in_flight is not None:
+                if not self._forget_missing_binding(conn, binding_id, actor_type="admin", actor_id=str(actor)):
                     busy.append(str(name))
                     continue
-                conn.execute("DELETE FROM telegram_customer_operation_attempts WHERE binding_id = ?", (binding_id,))
-                conn.execute(
-                    "UPDATE telegram_drift_findings SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, "
-                    "row_version = row_version + 1 WHERE customer_id = ? AND node_id = ? "
-                    "AND kind = 'binding_missing' AND status IN ('open', 'ignored') "
-                    "AND lower(remote_email) = lower(?)", (customer_id, node_id, remote_email or ""),
-                )
-                conn.execute("DELETE FROM customer_node_bindings WHERE id = ?", (binding_id,))
-                conn.execute(
-                    "INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id) "
-                    "VALUES ('binding_forgotten', 'admin', ?, 'customer_node_binding', ?)",
-                    (str(actor), str(binding_id)),
-                )
                 forgotten.append(str(name))
         return {"forgotten": forgotten, "busy": busy}
 
@@ -8711,7 +8720,7 @@ class TelegramRegistry:
             bindings = conn.execute(
                 f"""
                 SELECT b.id, b.customer_id, b.node_id, b.remote_client_id, b.remote_sub_id, b.remote_email,
-                       b.desired_enabled, c.email_display, c.email_canonical
+                       b.desired_enabled, c.email_display, c.email_canonical, b.management_state, b.row_version
                 FROM customer_node_bindings AS b
                 JOIN customers AS c ON c.id = b.customer_id
                 WHERE b.inbound_id = 1 AND b.node_id IN ({placeholders})
@@ -8728,11 +8737,44 @@ class TelegramRegistry:
                 "remote_client_id": str(row[3] or ""), "remote_sub_id": str(row[4] or ""),
                 "remote_email": str(row[5]), "desired_enabled": bool(row[6]),
                 "customer_email": str(row[7]), "customer_canonical": str(row[8]),
+                "management_state": str(row[9]), "row_version": int(row[10]),
             } for row in bindings),
             "customers": tuple({
                 "customer_id": int(row[0]), "email_display": str(row[1]), "email_canonical": str(row[2]),
             } for row in customers),
         }
+
+    def sync_drift_binding_enabled(self, candidates: list[dict[str, Any]]) -> None:
+        """Apply panel state only while the scanned binding is still unchanged and idle."""
+        with connect(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for item in candidates:
+                enabled = int(item["remote_enabled"])
+                cursor = conn.execute(
+                    """
+                    UPDATE customer_node_bindings
+                    SET desired_enabled = ?, last_enabled = 1,
+                        suspended_by_operation_id = CASE WHEN ? = 1 THEN NULL ELSE suspended_by_operation_id END,
+                        row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND node_id = ? AND inbound_id = 1 AND management_state = 'confirmed'
+                      AND remote_client_id = ? AND COALESCE(remote_sub_id, '') = ? AND remote_email = ?
+                      AND desired_enabled = ? AND row_version = ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM telegram_customer_operation_attempts AS a
+                          JOIN telegram_customer_operations AS o ON o.id = a.operation_id
+                          WHERE a.binding_id = customer_node_bindings.id
+                            AND o.status IN ('queued', 'running', 'partial') AND o.dismissed_at IS NULL
+                      )
+                    """,
+                    (enabled, enabled, item["binding_id"], item["node_id"], item["remote_client_id"],
+                     item["remote_sub_id"], item["remote_email"], int(item["desired_enabled"]), item["row_version"]),
+                )
+                if cursor.rowcount:
+                    conn.execute(
+                        "INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id) "
+                        "VALUES ('drift_binding_enabled_synced', 'system', 'drift_scan', 'customer_node_binding', ?)",
+                        (str(item["binding_id"]),),
+                    )
 
     def record_drift_findings(self, *, scanned_node_ids: object, findings: object) -> tuple[DriftFinding, ...]:
         if not isinstance(scanned_node_ids, (list, tuple)):
@@ -8791,7 +8833,18 @@ class TelegramRegistry:
                     """,
                     node_ids,
                 )
-            for item in normalized:
+            unique_findings = {item["finding_key"]: item for item in normalized}
+            for item in unique_findings.values():
+                existing = conn.execute(
+                    "SELECT status, details_json FROM telegram_drift_findings WHERE finding_key = ?",
+                    (item["finding_key"],),
+                ).fetchone()
+                details = json.loads(item["details_json"])
+                previous_seen = 0
+                if existing and existing[0] in ("open", "ignored"):
+                    previous_seen = int(json.loads(existing[1]).get("seen_scans", 0))
+                details["seen_scans"] = previous_seen + 1
+                item["details_json"] = json.dumps(details, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                 conn.execute(
                     """
                     INSERT INTO telegram_drift_findings
@@ -8801,9 +8854,9 @@ class TelegramRegistry:
                             :remote_sub_id, :details_json)
                     ON CONFLICT(finding_key) DO UPDATE SET
                         details_json = excluded.details_json, last_seen_at = CURRENT_TIMESTAMP,
-                        status = CASE WHEN telegram_drift_findings.status = 'resolved' THEN 'open'
+                        status = CASE WHEN telegram_drift_findings.status IN ('resolved', 'adopted') THEN 'open'
                                       ELSE telegram_drift_findings.status END,
-                        resolved_at = CASE WHEN telegram_drift_findings.status = 'resolved' THEN NULL
+                        resolved_at = CASE WHEN telegram_drift_findings.status IN ('resolved', 'adopted') THEN NULL
                                            ELSE telegram_drift_findings.resolved_at END,
                         row_version = telegram_drift_findings.row_version + 1
                     """,
@@ -8871,6 +8924,22 @@ class TelegramRegistry:
                 node_ids,
             )
         return self.list_drift_findings(status="open", limit=200)
+
+    def auto_forget_drift_binding(self, finding_id: int, version: int) -> None:
+        with connect(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT b.id FROM telegram_drift_findings f JOIN customer_node_bindings b "
+                "ON b.customer_id = f.customer_id AND b.node_id = f.node_id AND b.inbound_id = 1 "
+                "AND COALESCE(b.remote_client_id, '') = f.remote_client_id "
+                "AND COALESCE(b.remote_sub_id, '') = f.remote_sub_id "
+                "AND lower(b.remote_email) = lower(f.remote_email) "
+                "WHERE f.id = ? AND f.row_version = ? AND f.status = 'open' AND f.kind = 'binding_missing' "
+                "AND COALESCE(json_extract(f.details_json, '$.seen_scans'), 0) >= 2",
+                (finding_id, version),
+            ).fetchone()
+            if row:
+                self._forget_missing_binding(conn, int(row[0]), actor_type="system", actor_id="drift_scan")
 
     def list_drift_findings(self, *, status: str = "open", limit: int = 100) -> tuple[DriftFinding, ...]:
         if status not in {"open", "adopted", "ignored", "resolved", "all"}:
@@ -8956,7 +9025,8 @@ class TelegramRegistry:
         remote_sub_id: str,
         remote_enabled: bool,
         adopted_by: str,
-    ) -> DriftFinding:
+        automatic: bool = False,
+    ) -> DriftFinding | None:
         """Adopt a re-read exact orphan as a local binding; never writes a node."""
 
         local_finding_id = _positive_int(finding_id, "finding_id")
@@ -8964,13 +9034,15 @@ class TelegramRegistry:
         actor = _nonempty(adopted_by, "adopted_by")
         canonical = canonicalize_email(remote_email)
         with connect(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
             finding = conn.execute(
                 """
                 SELECT customer_id, node_id, remote_email, remote_client_id, remote_sub_id
                 FROM telegram_drift_findings
                 WHERE id = ? AND kind = 'orphan_remote' AND status = 'open' AND row_version = ?
+                  AND (? = 0 OR COALESCE(json_extract(details_json, '$.seen_scans'), 0) >= 2)
                 """,
-                (local_finding_id, expected_version),
+                (local_finding_id, expected_version, int(automatic)),
             ).fetchone()
             if finding is None or finding[0] is None:
                 raise VersionConflictError("drift finding is not adoptable")
@@ -9004,10 +9076,13 @@ class TelegramRegistry:
                 """
                 INSERT INTO telegram_audit_log
                     (event_type, actor_type, actor_id, entity_type, entity_id)
-                VALUES ('drift_binding_adopted', 'admin', ?, 'drift_finding', ?)
+                VALUES (?, ?, ?, 'drift_finding', ?)
                 """,
-                (actor, str(local_finding_id)),
+                ("drift_binding_auto_adopted" if automatic else "drift_binding_adopted",
+                 "system" if automatic else "admin", actor, str(local_finding_id)),
             )
+        if automatic:
+            return None
         return next(item for item in self.list_drift_findings(status="all", limit=200) if item.finding_id == local_finding_id)
 
 

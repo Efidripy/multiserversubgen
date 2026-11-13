@@ -941,7 +941,10 @@ app.router.lifespan_context = build_lifespan(
     telegram_drift_worker_loop=(
         lambda tracker: run_drift_worker(
             tracker,
-            TelegramDriftScanner(registry=TelegramRegistry(DB_PATH), list_nodes=node_service.list_nodes, client_manager=client_mgr),
+            TelegramDriftScanner(
+                registry=TelegramRegistry(DB_PATH), list_nodes=node_service.list_nodes, client_manager=client_mgr,
+                auto_sync=SETTINGS.telegram.drift_auto_sync,
+            ),
             SETTINGS.telegram.drift_scan_interval_sec, logger,
         )
     ) if SETTINGS.telegram.enabled and SETTINGS.telegram.drift_scan_interval_sec else None,
