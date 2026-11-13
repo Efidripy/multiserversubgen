@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from prometheus_client import Counter, Gauge, Histogram
 
+worker_healthy = Gauge("worker_healthy", "Periodic worker health", ["worker"])
+
 # Forced node refreshes run far past the default 10s ceiling, which pins p95 at 10.
 LONG_OPERATION_BUCKETS = (*Histogram.DEFAULT_BUCKETS[:-1], 15.0, 30.0, 45.0, 60.0, float("inf"))
 
