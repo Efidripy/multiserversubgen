@@ -334,7 +334,7 @@ curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN?nodes=US,UK"
 Пример обычного шаблона:
 ```json
 {
-  "dns": {"servers": ["192.0.2.3", "192.0.2.8"], "queryStrategy": "UseIP"},
+  "dns": {"servers": ["1.1.1.1", "1.0.0.1"], "queryStrategy": "UseIP"},
   "outbounds": [
     {"tag": "proxy", "mux": {"enabled": true}, "streamSettings": {"sockopt": {"tcpFastOpen": true}}},
     {"tag": "direct", "protocol": "freedom"},
