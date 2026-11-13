@@ -3,6 +3,37 @@
 from __future__ import annotations
 
 import logging
+import re
+import traceback
+
+
+_URL = re.compile(r"\b(?:https?|socks5?)://[^\s\"'<>]+", re.IGNORECASE)
+_HOST = re.compile(r"(?i)(\bhost\s*[=:]\s*['\"]?)[^'\"\s,):]+")
+_IP = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
+_CREDENTIAL = re.compile(r"(?i)(\b(?:password|token|secret|api_key)\s*[=:]\s*['\"]?)[^'\"\s,)&]+")
+_BOT_TOKEN = re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b")
+
+
+def _redact_log_text(value: str) -> str:
+    value = _URL.sub("<redacted-url>", value)
+    value = _HOST.sub(r"\1<redacted>", value)
+    value = _IP.sub("<redacted-ip>", value)
+    value = _CREDENTIAL.sub(r"\1<redacted>", value)
+    return _BOT_TOKEN.sub("<redacted-token>", value)
+
+
+class _RedactFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _redact_log_text(record.getMessage())
+        record.args = ()
+        if record.exc_info:
+            record.exc_text = _redact_log_text("".join(traceback.format_exception(*record.exc_info)))
+            record.exc_info = None
+        elif record.exc_text:
+            record.exc_text = _redact_log_text(record.exc_text)
+        if record.stack_info:
+            record.stack_info = _redact_log_text(record.stack_info)
+        return True
 
 
 def configure_logging(
@@ -68,8 +99,10 @@ def configure_logging(
             handlers[0].emit(
                 logging.LogRecord(
                     "shared.logging", logging.WARNING, "", 0,
-                    f"Could not open log file {log_file!r}: {exc}", (), None,
+                    _redact_log_text(f"Could not open log file {log_file!r}: {exc}"), (), None,
                 )
             )
 
+    for handler in handlers:
+        handler.addFilter(_RedactFilter())
     logging.basicConfig(level=numeric_level, handlers=handlers, force=True)

@@ -498,7 +498,7 @@
     "noteTitle": "Note",
     "noteSaved": "Note saved",
     "noteSaveFailed": "Failed to save note",
-    "ipPlaceholder": "e.g. 1.2.3.4",
+    "ipPlaceholder": "e.g. 192.0.2.2",
     "copyUuid": "Copy UUID",
     "clearNote": "Clear note",
     "newGroupName": "New group name",

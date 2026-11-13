@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Reject public addresses and recognizable secrets in repository files."""
+
+import hashlib
+import ipaddress
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
+ALLOWED = tuple(ipaddress.ip_network(value) for value in (
+    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24",
+))
+VERSION_PREFIX = re.compile(r"(?:\bversion\b[\s\"'=:]*|(?<!\w)v|(?:==|>=)\s*[\"']?)$", re.IGNORECASE)
+EXCEPTION = re.compile(r"(?:#|//|<!--|/\*|;)\s*prod-data-ok:\s*\S")
+LOCK_FILES = {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "Pipfile.lock", "uv.lock", "Cargo.lock", "Gemfile.lock", "composer.lock"}
+SECRETS = re.compile(
+    r"(?<![\w-])\d{8,10}:[A-Za-z0-9_-]{35}(?![\w-])"
+    r"|-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"
+    r"|(?<![A-Z0-9])AKIA[A-Z0-9]{16}(?![A-Z0-9])"
+    r"|(?<![\w-])sk-(?:live-)?[A-Za-z0-9]{32,}(?![\w-])"
+)
+
+
+def unsafe(line, *, pinned_examples=False):
+    if SECRETS.search(line):
+        return True
+    if EXCEPTION.search(line):
+        return False
+    if pinned_examples:
+        return False
+    for match in IPV4.finditer(line):
+        if VERSION_PREFIX.search(line[:match.start()]):
+            continue
+        try:
+            address = ipaddress.ip_address(match.group())
+        except ValueError:
+            continue
+        if (address.is_unspecified or address.is_link_local or address.is_multicast
+                or address.is_reserved or address in ipaddress.ip_network("0.0.0.0/8")):
+            continue
+        if not any(address in network for network in ALLOWED):
+            return True
+    return False
+
+
+def main():
+    paths = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split(b"\0")
+    failures = []
+    for raw in paths:
+        if not raw:
+            continue
+        path = Path(raw.decode(sys.getfilesystemencoding(), errors="surrogateescape"))
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            continue
+        if b"\0" in data:
+            continue
+        # The reviewed upstream contract is immutable and includes public example IPs.
+        # Any change to it disables this exception, including newly added addresses.
+        pinned_examples = (path.parts[:2] == ("backend", "tests") or path.parts[:1] == ("docs",)
+                           or ("node_modules" in path.parts and path.parts[0] == "frontend")
+                           or path.name in LOCK_FILES or path.suffix.lower() == ".lock"
+                           or (path.as_posix() == "backend/integrations/xui/openapi/3x-ui-3.x.openapi.json"
+                               and hashlib.sha256(data).hexdigest() == "574e124e4524f238f224cbf7a6e2061c81bd51b963aec15fc859a97706719d0f"))
+        try:
+            lines = data.decode("utf-8").splitlines()
+        except UnicodeDecodeError:
+            continue
+        for number, line in enumerate(lines, 1):
+            if unsafe(line, pinned_examples=pinned_examples):
+                failures.append(f"{path.as_posix()}:{number}")
+    if failures:
+        print("Potential production data or secrets found:", file=sys.stderr)
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

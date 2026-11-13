@@ -222,7 +222,7 @@ function getPageIcon(page: string): IconName {
 const servers = [
   {
     name: "RU-5-EKT",
-    ip: "185.244.28.13",
+    ip: "192.0.2.11",
     load: 62,
     users: 14,
     traffic: "3.8 TB",
@@ -230,7 +230,7 @@ const servers = [
   },
   {
     name: "NL-104-F1",
-    ip: "45.82.71.104",
+    ip: "192.0.2.12",
     load: 38,
     users: 9,
     traffic: "2.9 TB",
@@ -238,7 +238,7 @@ const servers = [
   },
   {
     name: "DE-65-F3",
-    ip: "91.107.212.65",
+    ip: "192.0.2.13",
     load: 81,
     users: 18,
     traffic: "4.7 TB",
@@ -246,7 +246,7 @@ const servers = [
   },
   {
     name: "UK-138-LT",
-    ip: "138.68.162.44",
+    ip: "192.0.2.14",
     load: 44,
     users: 11,
     traffic: "3.2 TB",
@@ -254,7 +254,7 @@ const servers = [
   },
   {
     name: "US-89-LT",
-    ip: "89.117.52.20",
+    ip: "192.0.2.15",
     load: 29,
     users: 7,
     traffic: "1.8 TB",
@@ -1537,9 +1537,9 @@ function ClientDrawer({ client, onClose }: { client: string[]; onClose: () => vo
         {tab === "Сессии" && (
           <div className="drawer-body session-list">
             {[
-              ["iPhone 15 Pro", "85.26.18.90", "Сейчас"],
-              ["MacBook Pro", "85.26.18.90", "12 мин"],
-              ["Windows PC", "91.198.77.42", "2 дня"],
+              ["iPhone 15 Pro", "192.0.2.16", "Сейчас"],
+              ["MacBook Pro", "192.0.2.16", "12 мин"],
+              ["Windows PC", "192.0.2.17", "2 дня"],
             ].map((x) => (
               <div key={x[0]}>
                 <span>

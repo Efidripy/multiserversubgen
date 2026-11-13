@@ -57,10 +57,10 @@ Authorization: Basic base64(username:password)
   {
     "id": 1,
     "name": "Server-NL",
-    "ip": "123.45.67.89",
+    "ip": "192.0.2.10",
     "port": "443",
     "username": "admin",
-    "panel_url": "https://123.45.67.89:443/path",
+    "panel_url": "https://192.0.2.10:443/path",
     "base_path": "path",
     "read_only": false,
     "tags": []
@@ -75,7 +75,7 @@ Authorization: Basic base64(username:password)
 ```json
 {
   "name": "Server-DE",
-  "url": "https://123.45.67.89:443/path/",
+  "url": "https://192.0.2.10:443/path/",
   "user": "admin",
   "password": "password123"
 }
@@ -118,7 +118,7 @@ Authorization: Basic base64(username:password)
     {
       "id": 1,
       "node_name": "Server-NL",
-      "node_ip": "123.45.67.89",
+      "node_ip": "192.0.2.10",
       "protocol": "vless",
       "port": 443,
       "remark": "Main VLESS",

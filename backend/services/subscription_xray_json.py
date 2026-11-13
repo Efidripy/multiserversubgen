@@ -9,7 +9,7 @@ from services.subscription_formats import _normalised
 VALID_BALANCER_STRATEGIES = {"leastLoad", "leastPing", "random", "roundRobin"}
 
 DEFAULT_XRAY_TEMPLATE: dict[str, Any] = {
-    "dns": {"servers": ["1.1.1.1", "1.0.0.1"], "queryStrategy": "UseIP"},
+    "dns": {"servers": ["1.1.1.1", "1.0.0.1"], "queryStrategy": "UseIP"},  # prod-data-ok: public DNS resolvers used by generated configuration
     "routing": {
         "domainMatcher": "hybrid",
         "domainStrategy": "IPIfNonMatch",
