@@ -345,3 +345,5 @@ reports recovery, empty creation, or disabled storage in `operator_notes`.
 If local history tables coexist with retained migrated tables, reconcile the
 local history before enabling the split; the service keeps using local tables.
 Review the warning and restore a suitable backup when history is needed.
+
+- Lock order for writers that touch both databases: admin.db (main) first, then the attached metrics database. `BEGIN IMMEDIATE` already follows it; do not write metrics before main in one transaction.

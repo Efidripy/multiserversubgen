@@ -177,6 +177,27 @@ class AdGuardRuntime:
             "status": snapshot.get("status", {}),
         }
         with connect(self.db_path) as conn:
+            # Lock order everywhere: admin (main) first, then the attached metrics db.
+            conn.execute(
+                """
+                UPDATE adguard_sources
+                SET last_error = ?,
+                    last_success_ts = CASE WHEN ? > 0 THEN ? ELSE last_success_ts END,
+                    last_collected_ts = ?,
+                    api_base = CASE WHEN ? != '' THEN ? ELSE api_base END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    str(snapshot.get("error") or ""),
+                    now_ts if available else 0,
+                    now_ts if available else 0,
+                    now_ts,
+                    str(snapshot.get("api_base") or ""),
+                    str(snapshot.get("api_base") or ""),
+                    int(snapshot.get("source_id") or 0),
+                ),
+            )
             conn.execute(
                 """
                 INSERT INTO adguard_history (
@@ -196,26 +217,6 @@ class AdGuardRuntime:
                     float(snapshot.get("avg_latency_ms", 0) or 0),
                     float(snapshot.get("upstream_errors", 0) or 0),
                     json.dumps(extra, ensure_ascii=False),
-                ),
-            )
-            conn.execute(
-                """
-                UPDATE adguard_sources
-                SET last_error = ?,
-                    last_success_ts = CASE WHEN ? > 0 THEN ? ELSE last_success_ts END,
-                    last_collected_ts = ?,
-                    api_base = CASE WHEN ? != '' THEN ? ELSE api_base END,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (
-                    str(snapshot.get("error") or ""),
-                    now_ts if available else 0,
-                    now_ts if available else 0,
-                    now_ts,
-                    str(snapshot.get("api_base") or ""),
-                    str(snapshot.get("api_base") or ""),
-                    int(snapshot.get("source_id") or 0),
                 ),
             )
             conn.execute(
