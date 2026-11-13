@@ -92,3 +92,75 @@ def test_retention_keeps_provisioning_snapshots_used_by_reminders(tmp_path):
     with connect(path) as conn:
         assert conn.execute("SELECT id FROM telegram_provisioning_attempts ORDER BY id").fetchall() == [(1,), (2,), (3,)]
         assert conn.execute("SELECT id FROM telegram_provisioning_jobs ORDER BY id").fetchall() == [(1,), (2,)]
+
+
+def test_connect_disables_autocheckpoint_and_limits_journal(tmp_path):
+    with connect(str(tmp_path / "admin.db")) as conn:
+        assert conn.execute("PRAGMA wal_autocheckpoint").fetchone() == (0,)
+        assert conn.execute("PRAGMA journal_size_limit").fetchone() == (67108864,)
+
+
+def test_checkpoint_truncates_large_wal(tmp_path):
+    path = str(tmp_path / "admin.db")
+    with connect(path) as conn:
+        conn.execute("CREATE TABLE data (value BLOB)")
+        for _ in range(12):
+            conn.execute("INSERT INTO data VALUES (zeroblob(524288))")
+            conn.commit()
+        wal = tmp_path / "admin.db-wal"
+        before = wal.stat().st_size
+        assert before > 4 * 1024 * 1024
+        assert checkpoint_database(path) == 0
+        assert wal.stat().st_size < before
+
+
+def test_checkpoints_are_serialized(monkeypatch):
+    import threading
+    import services.telegram_retention as module
+
+    entered = threading.Event()
+    release = threading.Event()
+    second_entered = threading.Event()
+    calls = []
+
+    class Connection:
+        def __enter__(self):
+            calls.append(1)
+            if len(calls) == 1:
+                entered.set()
+                assert release.wait(5)
+            else:
+                second_entered.set()
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def execute(self, sql):
+            return self
+
+        def fetchone(self):
+            return (0, 0, 0)
+
+    monkeypatch.setattr(module, "connect", lambda _: Connection())
+    first = threading.Thread(target=module.checkpoint_database, args=("unused",))
+    second = threading.Thread(target=module.checkpoint_database, args=("unused",))
+    first.start()
+    assert entered.wait(5)
+    second.start()
+    try:
+        assert not second_entered.wait(0.2)
+    finally:
+        release.set()
+        first.join(5)
+        second.join(5)
+    assert second_entered.is_set()
+
+
+def test_zero_interval_disables_checkpoint_worker(monkeypatch):
+    import asyncio
+    from dataclasses import replace
+    import main
+
+    monkeypatch.setattr(main, "SETTINGS", replace(main.SETTINGS, db_checkpoint_interval_sec=0))
+    asyncio.run(main._database_checkpoint_worker_loop(None))

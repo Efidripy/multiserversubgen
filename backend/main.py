@@ -694,14 +694,35 @@ async def _database_maintenance_worker_loop(worker_tracker) -> None:
             return
         except Exception:
             logger.exception("Database retention failed")
+        if not await worker_tracker.wait_or_stop(86400):
+            return
+
+
+async def _database_checkpoint_worker_loop(worker_tracker) -> None:
+    interval = SETTINGS.db_checkpoint_interval_sec
+    if not interval:
+        return
+    clock = asyncio.get_running_loop().time
+    next_truncate = clock() + 86400
+    next_log = clock() + 86400
+    while worker_tracker.accepting:
+        if not await worker_tracker.wait_or_stop(interval):
+            return
+        now = clock()
+        truncate = now >= next_truncate
+        log_sizes = now >= next_log
         try:
-            await worker_tracker.run("database.checkpoint", checkpoint_database, DB_PATH)
+            busy = await worker_tracker.run(
+                "database.checkpoint", checkpoint_database, DB_PATH, truncate, log_sizes
+            )
+            if truncate and not busy:
+                next_truncate = clock() + 86400
+            if log_sizes:
+                next_log = clock() + 86400
         except LifecycleWorkAdmissionClosed:
             return
         except Exception:
             logger.exception("Database checkpoint failed")
-        if not await worker_tracker.wait_or_stop(86400):
-            return
 
 
 async def _telegram_retention_worker_loop(worker_tracker) -> None:
@@ -906,6 +927,9 @@ app.router.lifespan_context = build_lifespan(
         else None
     ),
     database_maintenance_worker_loop=_database_maintenance_worker_loop,
+    database_checkpoint_worker_loop=(
+        _database_checkpoint_worker_loop if SETTINGS.db_checkpoint_interval_sec else None
+    ),
     telegram_retention_worker_loop=(
         (lambda worker_tracker: _telegram_retention_worker_loop(worker_tracker))
         if SETTINGS.telegram.retention_worker_enabled
