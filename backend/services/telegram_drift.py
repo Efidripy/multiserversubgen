@@ -10,8 +10,10 @@ an already-present remote record without a local binding is reported.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Callable
 
+from services.db_bootstrap import connect
 from services.telegram_registry import TelegramRegistry, canonicalize_email
 
 
@@ -20,6 +22,9 @@ class DriftScanResult:
     scanned_node_ids: tuple[int, ...]
     unavailable_node_ids: tuple[int, ...]
     finding_count: int
+
+
+_scan_lock = Lock()
 
 
 class TelegramDriftScanner:
@@ -58,6 +63,28 @@ class TelegramDriftScanner:
         return result
 
     def scan(self, *, node_ids: object = None) -> DriftScanResult:
+        with _scan_lock:
+            return self._scan(node_ids=node_ids)
+
+    def scan_if_idle(self) -> tuple[DriftScanResult, int] | None:
+        """Skip scheduled work when any scan is already running."""
+        if not _scan_lock.acquire(blocking=False):
+            return None
+        try:
+            with connect(self._registry.database_path) as conn:
+                previous = {row[0] for row in conn.execute(
+                    "SELECT id FROM telegram_drift_findings WHERE status = 'open'"
+                )}
+            result = self._scan()
+            with connect(self._registry.database_path) as conn:
+                current = {row[0] for row in conn.execute(
+                    "SELECT id FROM telegram_drift_findings WHERE status = 'open'"
+                )}
+            return result, len(current - previous)
+        finally:
+            _scan_lock.release()
+
+    def _scan(self, *, node_ids: object = None) -> DriftScanResult:
         inventory = self._registry.drift_inventory(node_ids=node_ids)
         desired_nodes = {int(item["node_id"]): item for item in inventory["nodes"]}
         live_nodes = {int(node.get("id")): node for node in self._list_nodes() if isinstance(node, dict) and node.get("id")}
