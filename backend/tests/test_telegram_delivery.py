@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.telegram_delivery import (
     TelegramApiSender,
+    TelegramDeliveryError,
     TelegramMessageEditUnavailableError,
 )
 from services.telegram_registration import TelegramOutboundMessage
@@ -155,7 +156,8 @@ def test_sender_delete_ignores_not_found_and_cant_be_deleted_but_raises_other_er
     assert sender2.send(TelegramOutboundMessage(chat_id=42, text="", delete_message_id=77)) is None
 
     sender3 = TelegramApiSender("test-token", transport=_ErrorTransport("Bad Request: chat not found"))
-    assert sender3.send(TelegramOutboundMessage(chat_id=42, text="", delete_message_id=77)) is None
+    with pytest.raises(TelegramDeliveryError):
+        sender3.send(TelegramOutboundMessage(chat_id=42, text="", delete_message_id=77))
 
 
 class _SequenceTransport:
@@ -280,3 +282,15 @@ def test_interactive_failure_does_not_interrupt_update(status, caplog):
     assert str(status) in caplog.text
     if status == 429:
         assert "retry_after=17" in caplog.text
+
+
+def test_sender_propagates_transient_network_errors_so_the_update_is_retried():
+    from urllib.error import URLError
+
+    class _Down:
+        def open(self, request, *, timeout):
+            raise URLError("down")
+
+    sender = TelegramApiSender("test-token", transport=_Down())
+    with pytest.raises(TelegramDeliveryError):
+        sender.send(TelegramOutboundMessage(chat_id=42, text="Hello"))

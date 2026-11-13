@@ -70,15 +70,6 @@ class TelegramApiSender:
         return f"https://api.telegram.org/bot{self._token_provider()}"
 
     def send(self, message: TelegramOutboundMessage) -> int | None:
-        try:
-            return self._send(message)
-        except TelegramMessageEditUnavailableError:
-            raise
-        except Exception:
-            logger.warning("Telegram interactive delivery failed")
-            return None
-
-    def _send(self, message: TelegramOutboundMessage) -> int | None:
         if message.delete_message_id is not None:
             return self._delete_message(message)
         if message.edit_message_id is not None:
