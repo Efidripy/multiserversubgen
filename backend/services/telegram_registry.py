@@ -7723,14 +7723,14 @@ class TelegramRegistry:
                     raise IdempotencyConflictError("idempotency key was already used for another command")
                 return CustomerOperationRescheduleResult(**json.loads(str(receipt[1])))
             operation = conn.execute(
-                "SELECT status, row_version, lease_until FROM telegram_customer_operations WHERE id = ?",
+                "SELECT status, row_version, lease_until, dismissed_at FROM telegram_customer_operations WHERE id = ?",
                 (normalized_operation_id,),
             ).fetchone()
             if operation is None:
                 raise TelegramRegistryError("customer operation was not found")
             if int(operation[1]) != expected_version:
                 raise VersionConflictError("customer operation was updated by another worker or administrator")
-            if str(operation[0]) not in {"partial", "failed"} or operation[2] is not None:
+            if str(operation[0]) not in {"partial", "failed"} or operation[2] is not None or operation[3] is not None:
                 raise VersionConflictError("customer operation cannot be rescheduled in its current state")
             if dismiss:
                 # No status means "abandoned"; hide it from the attention list but keep the history.
