@@ -7251,24 +7251,18 @@ class TelegramRegistry:
                 "FROM customer_node_bindings b "
                 "JOIN nodes n ON n.id = b.node_id WHERE b.customer_id = ?", (customer_id,)
             ).fetchall()
-            # Re-check missing bindings against a fresh node snapshot instead of asking the admin
-            # to "run a reconciliation" that does not exist: a client that is back on the panel is
-            # confirmed again; one that is really gone is a note, not a repairable problem.
-            healed: list[str] = []
+            # Re-check missing bindings against a fresh node snapshot so the admin gets a real answer:
+            # a client that is really gone is a note, not a repairable problem; one that is visible
+            # again is left for the drift scan to confirm (it checks the full identity).
             notes: list[dict[str, Any]] = []
             resolved: list[tuple] = []
             for state, name, binding_id, node_id, remote_client_id, node_enabled in bindings:
                 if state == 'missing':
                     present = _fresh_snapshot_has_client(conn, int(node_id), str(remote_client_id or ""))
                     if present is True:
-                        conn.execute(
-                            "UPDATE customer_node_bindings SET management_state = 'confirmed', "
-                            "last_confirmed_at = CURRENT_TIMESTAMP, row_version = row_version + 1, "
-                            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND management_state = 'missing'",
-                            (binding_id,),
-                        )
-                        healed.append(str(name))
-                        state = 'confirmed'
+                        # Not confirmed here: the drift scan verifies inbound, id, sub id and email together.
+                        notes.append({"code": "binding_present", "node_name": str(name)})
+                        state = 'present'
                     elif present is False or (present is None and not node_enabled):
                         # A node taken out of service has no fresh snapshot: that is an expected note too.
                         notes.append({"code": "binding_absent", "node_name": str(name)})
@@ -7305,8 +7299,6 @@ class TelegramRegistry:
             if identity is not None and not bool(identity[0]) and not changed:
                 problems.append({"code": "snapshot_incomplete"})
         result: dict[str, Any] = {"fixed": ["remote_snapshot_ready"] if changed else [], "problems": problems}
-        if healed:
-            result["healed_nodes"] = healed
         if notes:
             result["notes"] = notes
         return result

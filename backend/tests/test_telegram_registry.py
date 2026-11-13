@@ -1985,7 +1985,7 @@ def _snapshot(conn, node_id, uuids):
     )
 
 
-def test_repair_confirms_missing_binding_when_client_is_back_on_the_panel(tmp_path):
+def test_repair_does_not_confirm_binding_itself_when_client_is_back_on_the_panel(tmp_path):
     registry, customer_id, db_path = _repair_fixture(tmp_path)
     with connect(db_path) as conn:
         conn.execute("""INSERT INTO customer_node_bindings
@@ -1993,10 +1993,10 @@ def test_repair_confirms_missing_binding_when_client_is_back_on_the_panel(tmp_pa
             VALUES (?, 2, 'rc-1', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
         _snapshot(conn, 2, ["rc-1"])
     result = registry.repair_customer(customer_id, "admin")
-    assert result["healed_nodes"] == ["node-two"]
+    assert {"code": "binding_present", "node_name": "node-two"} in result["notes"]
     assert not any(p["code"] == "binding_missing" for p in result["problems"])
     with connect(db_path) as conn:
-        assert conn.execute("SELECT management_state FROM customer_node_bindings WHERE node_id = 2").fetchone() == ("confirmed",)
+        assert conn.execute("SELECT management_state FROM customer_node_bindings WHERE node_id = 2").fetchone() == ("missing",)
 
 
 def test_repair_reports_really_absent_client_as_a_note_not_a_problem(tmp_path):
@@ -2022,7 +2022,7 @@ def test_repair_recognises_client_id_field_of_inbound_settings_snapshots(tmp_pat
             "INSERT OR REPLACE INTO node_snapshots (node_id, status_data, is_online, updated_at) VALUES (2, ?, 1, CURRENT_TIMESTAMP)",
             (_json.dumps({"inbounds": [{"settings": {"clients": [{"id": "RC-1", "email": "repair-user"}]}}]}),),
         )
-    assert registry.repair_customer(customer_id, "admin")["healed_nodes"] == ["node-two"]
+    assert {"code": "binding_present", "node_name": "node-two"} in registry.repair_customer(customer_id, "admin")["notes"]
 
 
 def test_forget_missing_bindings_removes_only_missing_and_keeps_busy(tmp_path):

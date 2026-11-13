@@ -1265,13 +1265,15 @@ class TelegramRegistrationService:
                 result = self._registry.repair_customer(customer_id, str(user_id))
                 lines = ["Первичная настройка отмечена завершённой" if result["fixed"] else (
                     "Нужно внимание" if result["problems"] else "Чинить нечего")]
-                for node in result.get("healed_nodes", []):
-                    lines.append(f"На ноде {node} клиент снова найден на панели — статус обновлён.")
                 for note in result.get("notes", []):
-                    lines.append(
-                        f"На ноде {note.get('node_name') or 'неизвестной ноде'} клиента нет на панели "
-                        "(по свежим данным ноды) — это не ошибка. Нужен там — добавьте на ноду, не нужен — нажмите «Забыть»."
-                    )
+                    node = note.get("node_name") or "неизвестной ноде"
+                    if note.get("code") == "binding_present":
+                        lines.append(f"На ноде {node} клиент снова виден на панели — статус обновит ближайшая автоматическая сверка.")
+                    else:
+                        lines.append(
+                            f"На ноде {node} клиента нет на панели (по свежим данным ноды) — это не ошибка. "
+                            "Нужен там — добавьте на ноду, не нужен — нажмите «Забыть»."
+                        )
                 for problem in result["problems"]:
                     code = problem["code"]
                     node = problem.get("node_name") or "неизвестной ноде"
@@ -1289,7 +1291,7 @@ class TelegramRegistrationService:
                     }
                     lines.append(messages.get(code, "Проверьте состояние клиента в админке."))
                 markup = self._admin_customer_message(chat_id, customer_id, page).reply_markup
-                if result.get("notes") or any(p["code"] == "binding_missing" for p in result["problems"]):
+                if any(n.get("code") == "binding_absent" for n in result.get("notes", [])) or any(p["code"] == "binding_missing" for p in result["problems"]):
                     markup = {"inline_keyboard": [[{
                         "text": "🧹 Забыть «нет на панели»",
                         "callback_data": f"admin:customer-forget:{customer_id}:{page}",
