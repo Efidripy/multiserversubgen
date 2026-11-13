@@ -9,6 +9,7 @@ an already-present remote record without a local binding is reported.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Callable
@@ -28,11 +29,15 @@ _scan_lock = Lock()
 
 
 class TelegramDriftScanner:
-    def __init__(self, *, registry: TelegramRegistry, list_nodes: Callable[[], list[dict[str, Any]]], client_manager: Any, auto_sync: bool = True):
+    def __init__(self, *, registry: TelegramRegistry, list_nodes: Callable[[], list[dict[str, Any]]], client_manager: Any, auto_sync: bool | None = None):
         self._registry = registry
         self._list_nodes = list_nodes
         self._client_manager = client_manager
-        self._auto_sync = auto_sync
+        # None = follow TELEGRAM_DRIFT_AUTO_SYNC, so every scanner (scheduled, Refresh, node reconcile) obeys the opt-out.
+        self._auto_sync = (
+            os.getenv("TELEGRAM_DRIFT_AUTO_SYNC", "1").strip().lower() in ("1", "true", "yes", "on")
+            if auto_sync is None else auto_sync
+        )
 
     @staticmethod
     def _inbound_one_rows(rows: object) -> list[dict[str, Any]]:
@@ -97,7 +102,22 @@ class TelegramDriftScanner:
                 "AND COALESCE(json_extract(details_json, '$.seen_scans'), 0) >= 2",
                 node_ids,
             ).fetchall()
+        with connect(self._registry.database_path) as conn:
+            # An email that canonicalizes to the same customer on two remote clients is ambiguous: manual only.
+            ambiguous = {
+                (row[0], row[1]) for row in conn.execute(
+                    "SELECT customer_id, node_id FROM telegram_drift_findings "
+                    "WHERE status = 'open' AND kind = 'orphan_remote' AND customer_id IS NOT NULL "
+                    "GROUP BY customer_id, node_id HAVING COUNT(*) > 1"
+                )
+            }
+            owner = dict(conn.execute(
+                "SELECT id, customer_id || ':' || node_id FROM telegram_drift_findings WHERE kind = 'orphan_remote'"
+            ).fetchall())
+        ambiguous_keys = {f"{c}:{n}" for c, n in ambiguous}
         for finding_id, kind, version in rows:
+            if kind == "orphan_remote" and owner.get(finding_id) in ambiguous_keys:
+                continue
             if kind == "binding_missing":
                 self._registry.auto_forget_drift_binding(finding_id, version)
                 continue

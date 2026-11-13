@@ -799,3 +799,29 @@ def test_drift_enabled_sync_skips_protected_bindings(tmp_path, mode):
     with connect(db) as conn:
         assert conn.execute("SELECT desired_enabled, last_enabled FROM customer_node_bindings").fetchone() == (1, 1)
         assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_enabled_synced'").fetchone()[0] == 0
+
+
+def test_auto_drift_does_not_adopt_ambiguous_orphans(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("DELETE FROM customer_node_bindings")
+    rows = [
+        {"id": "c-1", "subId": "s-1", "email": "ops-user", "flow": "xtls-rprx-vision", "inbound_id": 1},
+        {"id": "c-2", "subId": "s-2", "email": "OPS-USER", "flow": "xtls-rprx-vision", "inbound_id": 1},
+    ]
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=_AutoDriftManager(rows))
+    for _ in range(3):
+        scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 0
+
+
+def test_default_scanner_follows_the_env_opt_out(tmp_path, monkeypatch):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    monkeypatch.setenv("TELEGRAM_DRIFT_AUTO_SYNC", "0")
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=_AutoDriftManager())
+    for _ in range(3):
+        scanner.scan()
+        scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 1
