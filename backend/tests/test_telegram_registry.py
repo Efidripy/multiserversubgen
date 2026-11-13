@@ -1883,3 +1883,94 @@ def test_dismissed_partial_node_operation_does_not_block_new_operation(tmp_path)
     preview = registry.preview_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="suspend_node")
     queued = registry.queue_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="suspend_node", expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key="second", created_by="admin")
     assert queued.status == "queued"
+
+
+def _repair_fixture(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "node-one")
+    _insert_node(db_path, 2, "node-two")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="repair-user", origin="telegram", email_source="admin", public_code="repair-user"
+    )
+    registry.get_or_create_identity(telegram_user_id=123, chat_id=123, username="repair-user", first_name=None, last_name=None)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_identities SET customer_id = ?, access_status = 'approved', remote_snapshot_ready = 0", (customer_id,))
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 1, 1, 'client', 'sub', 'repair-user', 'bot_provisioned', 'confirmed', 1)""", (customer_id,))
+    return registry, customer_id, db_path
+
+
+def test_repair_customer_is_idempotent_and_audited(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    assert registry.repair_customer(customer_id, "admin") == {"fixed": ["remote_snapshot_ready"], "problems": []}
+    assert registry.repair_customer(customer_id, "admin") == {"fixed": [], "problems": []}
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM telegram_audit_log WHERE event_type = 'customer_repaired'").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "partial"])
+def test_repair_customer_waits_for_initial_job(tmp_path, status):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        job_id = conn.execute("""INSERT INTO telegram_provisioning_jobs
+            (customer_id, trigger, idempotency_key, status, policy_snapshot_digest, created_by)
+            VALUES (?, 'approve_new', 'repair-job', ?, 'digest', 'admin')""", (customer_id, status)).lastrowid
+    result = registry.repair_customer(customer_id, "admin")
+    assert not result["fixed"]
+    assert {"code": "unfinished_job", "job_id": job_id, "status": status} in result["problems"]
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities").fetchone()[0] == 0
+
+
+def _initial_job(conn, customer_id, status, attempts):
+    job_id = conn.execute("""INSERT INTO telegram_provisioning_jobs
+        (customer_id, trigger, idempotency_key, status, policy_snapshot_digest, created_by, finished_at)
+        VALUES (?, 'approve_new', 'repair-job', ?, 'digest', 'admin', CURRENT_TIMESTAMP)""", (customer_id, status)).lastrowid
+    for node_id, attempt_status, error_code in attempts:
+        conn.execute("""INSERT INTO telegram_provisioning_attempts
+            (job_id, node_id, inbound_id, status, desired_client_id, desired_sub_id, desired_flow,
+             desired_total_bytes, desired_validity_days, desired_expiry_time, desired_client_enabled,
+             policy_version, error_code)
+            VALUES (?, ?, 1, ?, 'client', 'sub', 'xtls-rprx-vision', 0, 0, 0, 1, 1, ?)""",
+            (job_id, node_id, attempt_status, error_code))
+    return job_id
+
+
+def test_repair_customer_accepts_finished_partial_job_with_node_removal_skips(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        _initial_job(conn, customer_id, "partial", [(1, "succeeded", None), (2, "skipped", "node_bulk_remove_cancelled")])
+    result = registry.repair_customer(customer_id, "admin")
+    assert result == {"fixed": ["remote_snapshot_ready"], "problems": []}
+
+
+def test_repair_customer_keeps_cancelled_job_with_failed_attempt_blocking(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        job_id = _initial_job(conn, customer_id, "cancelled", [(1, "succeeded", None), (2, "failed", "identity_conflict")])
+    result = registry.repair_customer(customer_id, "admin")
+    assert not result["fixed"]
+    assert {"code": "unfinished_job", "job_id": job_id, "status": "cancelled"} in result["problems"]
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities").fetchone()[0] == 0
+
+
+def test_repair_customer_reports_missing_binding_and_operation(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_identities SET remote_snapshot_ready = 1")
+    preview = registry.preview_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="suspend_node")
+    operation = registry.queue_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="suspend_node", expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key="repair-op", created_by="admin")
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_identities SET remote_snapshot_ready = 0")
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+    result = registry.repair_customer(customer_id, "admin")
+    assert result["fixed"] == ["remote_snapshot_ready"]
+    assert {"code": "binding_missing", "node_name": "node-two"} in result["problems"]
+    assert {"code": "unfinished_operation", "operation_id": operation.operation_id, "node_name": "node-one"} in result["problems"]

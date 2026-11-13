@@ -124,11 +124,9 @@ class TelegramSubscriptionAccessGate:
         initial_provisioning_ready = bool(remote_snapshot_ready)
         if initial_provisioning_ready:
             with connect(self._db_path) as conn:
-                pending_snapshot = conn.execute(
-                    "SELECT 1 FROM telegram_provisioning_jobs WHERE customer_id = ? "
-                    "AND trigger = 'approve_new' AND status != 'succeeded' LIMIT 1", (int(customer_id),)
-                ).fetchone()
-            initial_provisioning_ready = pending_snapshot is None
+                from services.telegram_registry import initial_job_incomplete
+
+                initial_provisioning_ready = not initial_job_incomplete(conn, int(customer_id))
         decision = resolve_effective_access(
             access_status=str(identity_status),
             customer_id=int(customer_id),

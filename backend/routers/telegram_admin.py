@@ -647,6 +647,14 @@ def build_telegram_admin_router(
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
 
+    @router.post("/api/v1/telegram/customers/{customer_id}/repair")
+    def repair_customer(customer_id: int, request: Request):
+        username = require_admin(request)
+        try:
+            return registry.repair_customer(customer_id, username)
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
     @router.get("/api/v1/telegram/customers/{customer_id}/tags")
     def get_customer_tags(customer_id: int, request: Request):
         require_admin(request)

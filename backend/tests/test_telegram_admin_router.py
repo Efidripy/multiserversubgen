@@ -669,3 +669,15 @@ def test_service_notice_routes_are_admin_only_and_do_not_start_remote_io(tmp_pat
     viewer = _build_client(tmp_path, username="viewer", role="viewer")
     assert viewer.get("/api/v1/telegram/service-notice").status_code == 403
     assert viewer.put("/api/v1/telegram/service-notice", json={}).status_code == 403
+
+
+def test_customer_repair_route_requires_manage_permission(tmp_path):
+    client = _build_client(tmp_path)
+    registry = TelegramRegistry(str(tmp_path / "admin.db"))
+    customer_id = registry.create_customer(email_display="api-user", origin="manual", email_source="admin", public_code="api-user")
+    response = client.post(f"/api/v1/telegram/customers/{customer_id}/repair")
+    assert response.status_code == 200
+    assert response.json()["fixed"] == []
+    assert {"code": "identity_not_approved"} in response.json()["problems"]
+    viewer = _build_client(tmp_path, username="viewer", role="viewer")
+    assert viewer.post(f"/api/v1/telegram/customers/{customer_id}/repair").status_code == 403

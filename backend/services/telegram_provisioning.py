@@ -17,7 +17,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
 from services.db_bootstrap import connect
-from services.telegram_registry import BOT_CLIENT_FLOW, BOT_INBOUND_ID, TelegramRegistry, canonicalize_email
+from services.telegram_registry import (
+    BOT_CLIENT_FLOW, BOT_INBOUND_ID, TelegramRegistry, canonicalize_email, mark_completed_initial_snapshot,
+)
 
 
 class ProvisioningRemoteError(RuntimeError):
@@ -1039,6 +1041,7 @@ class TelegramProvisioningWorker:
                 """,
                 (status, job_id),
             )
+            mark_completed_initial_snapshot(conn, job_id)
             if status == "succeeded":
                 job = conn.execute(
                     "SELECT trigger, customer_id, source_existing_discovery_target_id "
