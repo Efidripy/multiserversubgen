@@ -917,18 +917,25 @@ class TelegramProvisioningWorker:
                 (claimed.job_id,),
             ).fetchone()
             source_target_id = int(source[0]) if source is not None and source[0] is not None else None
-            if source_target_id is not None and claimed.attempt_count >= TelegramExistingDiscoveryWorker.MAX_RETRYABLE_ATTEMPTS:
+            # Only failures that happen before any write may become terminal for ordinary jobs;
+            # after an uncertain write the attempt must keep reconciling so the client is not orphaned.
+            read_only_failure = error_code in {"remote_read_uncertain", "inbound_contract_uncertain"}
+            if claimed.attempt_count >= TelegramExistingDiscoveryWorker.MAX_RETRYABLE_ATTEMPTS and (
+                read_only_failure or source_target_id is not None
+            ):
+                terminal_code = "node_unreachable" if read_only_failure else error_code
                 conn.execute(
                     "UPDATE telegram_provisioning_attempts SET status = 'failed', error_code = ?, error_summary = NULL, "
                     "next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (error_code, claimed.attempt_id),
+                    (terminal_code, claimed.attempt_id),
                 )
-                conn.execute(
-                    "UPDATE telegram_existing_discovery_targets SET status = 'blocked_after_retry_limit', attempt_count = ?, "
-                    "error_code = ?, error_summary = NULL, next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, "
-                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (claimed.attempt_count, error_code, source_target_id),
-                )
+                if source_target_id is not None:
+                    conn.execute(
+                        "UPDATE telegram_existing_discovery_targets SET status = 'blocked_after_retry_limit', attempt_count = ?, "
+                        "error_code = ?, error_summary = NULL, next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (claimed.attempt_count, terminal_code, source_target_id),
+                    )
                 self._finalize_job(conn, claimed.job_id)
                 return
             conn.execute(

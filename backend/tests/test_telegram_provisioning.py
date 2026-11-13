@@ -287,6 +287,107 @@ def _worker(db_path, port, *, now=None, node=None):
     )
 
 
+def test_unreachable_provisioning_node_retries_with_backoff_without_blocking_other_node(tmp_path):
+    db_path, approval, _ = _queued_job(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (2, 'edge-b', 1, 0)")
+        conn.execute(
+            """INSERT INTO telegram_provisioning_attempts
+               (job_id, node_id, desired_client_id, desired_sub_id, policy_version)
+               SELECT job_id, 2, desired_client_id, desired_sub_id, policy_version
+               FROM telegram_provisioning_attempts WHERE job_id = ?""", (approval.job_id,)
+        )
+
+    class Port(FakeProvisioningPort):
+        def list_clients(self, *, node, inbound_id, email):
+            if node["id"] == 1:
+                raise ProvisioningRemoteError("offline")
+            return super().list_clients(node=node, inbound_id=inbound_id, email=email)
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    worker = TelegramProvisioningWorker(
+        db_path=db_path, node_loader=lambda node_id: {"id": node_id}, port=Port(),
+        worker_id="test", now=lambda: now,
+    )
+    delays = []
+    for index in range(5):
+        assert worker.run_once().processed
+        with connect(db_path) as conn:
+            status, code, next_at = conn.execute(
+                "SELECT status, error_code, next_attempt_at FROM telegram_provisioning_attempts WHERE job_id = ? AND node_id = 1",
+                (approval.job_id,),
+            ).fetchone()
+        if index < 4:
+            assert status == "ambiguous"
+            delays.append((datetime.fromisoformat(next_at) - now.replace(tzinfo=None)).total_seconds())
+            if index == 0:
+                assert worker.run_once().outcome == "succeeded"
+            assert not worker.run_once().processed
+            now += timedelta(hours=1)
+    assert delays == sorted(delays) and len(set(delays)) == 4
+    assert (status, code, next_at) == ("failed", "node_unreachable", None)
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT status, finished_at IS NOT NULL FROM telegram_provisioning_jobs WHERE id = ?", (approval.job_id,)).fetchone() == ("partial", 1)
+
+
+def test_second_node_is_processed_after_first_node_exhausts_retries(tmp_path):
+    db_path, approval, _ = _queued_job(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (2, 'edge-b', 1, 0)")
+        conn.execute(
+            """INSERT INTO telegram_provisioning_attempts
+               (job_id, node_id, desired_client_id, desired_sub_id, policy_version, next_attempt_at)
+               SELECT job_id, 2, desired_client_id, desired_sub_id, policy_version, '2099-01-01 00:00:00'
+               FROM telegram_provisioning_attempts WHERE job_id = ?""", (approval.job_id,)
+        )
+
+    class Port(FakeProvisioningPort):
+        def list_clients(self, *, node, inbound_id, email):
+            if node["id"] == 1:
+                raise ProvisioningRemoteError("offline")
+            return super().list_clients(node=node, inbound_id=inbound_id, email=email)
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    worker = TelegramProvisioningWorker(
+        db_path=db_path, node_loader=lambda node_id: {"id": node_id}, port=Port(),
+        worker_id="test", now=lambda: now,
+    )
+    for _ in range(5):
+        assert worker.run_once().processed
+        now += timedelta(hours=1)
+
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT status, error_code, attempt_count FROM telegram_provisioning_attempts WHERE job_id = ? AND node_id = 1",
+            (approval.job_id,),
+        ).fetchone() == ("failed", "node_unreachable", 5)
+        assert conn.execute(
+            "SELECT status FROM telegram_provisioning_jobs WHERE id = ?", (approval.job_id,)
+        ).fetchone()[0] != "running"
+        conn.execute(
+            "UPDATE telegram_provisioning_attempts SET next_attempt_at = NULL WHERE job_id = ? AND node_id = 2",
+            (approval.job_id,),
+        )
+
+    assert worker.run_once().outcome == "succeeded"
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT status FROM telegram_provisioning_attempts WHERE job_id = ? AND node_id = 2", (approval.job_id,)
+        ).fetchone()[0] == "succeeded"
+        assert conn.execute(
+            "SELECT status, finished_at IS NOT NULL FROM telegram_provisioning_jobs WHERE id = ?", (approval.job_id,)
+        ).fetchone() == ("partial", 1)
+
+
+def test_cancelled_provisioning_job_is_not_claimed(tmp_path):
+    db_path, approval, _ = _queued_job(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_provisioning_jobs SET status = 'cancelled' WHERE id = ?", (approval.job_id,))
+    port = FakeProvisioningPort()
+    assert not _worker(db_path, port).run_once().processed
+    assert port.add_calls == []
+
+
 def _deferred_discovery_worker(db_path, manager, nodes, *, now):
     discovery = ClientManagerLegacyDiscovery(client_manager=manager, list_nodes=lambda: nodes)
     return TelegramExistingDiscoveryWorker(
@@ -727,3 +828,34 @@ def test_initial_job_with_failed_attempt_does_not_complete_snapshot(tmp_path):
         conn.execute("UPDATE telegram_provisioning_jobs SET status = 'cancelled' WHERE id = ?", (approval.job_id,))
         assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities").fetchone()[0] == 0
     assert not TelegramRegistry(db_path).get_customer_access(55).initial_provisioning_ready
+
+
+def test_fifth_attempt_with_uncertain_write_keeps_reconciling_instead_of_failing(tmp_path):
+    db_path, approval, _ = _queued_job(tmp_path)
+
+    class Port(FakeProvisioningPort):
+        def __init__(self):
+            super().__init__()
+            self.reads = 0
+
+        def list_clients(self, *, node, inbound_id, email):
+            self.reads += 1
+            # Reads 1-4 fail before any write; read 5 finds nothing and the client is added;
+            # read 6 (verification after the write) fails.
+            if self.reads <= 4 or self.reads == 6:
+                raise ProvisioningRemoteError("offline")
+            return super().list_clients(node=node, inbound_id=inbound_id, email=email)
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    worker = TelegramProvisioningWorker(
+        db_path=db_path, node_loader=lambda node_id: {"id": node_id}, port=Port(),
+        worker_id="test", now=lambda: now,
+    )
+    for _ in range(5):
+        assert worker.run_once().processed
+        now += timedelta(hours=1)
+    with connect(db_path) as conn:
+        status, code = conn.execute(
+            "SELECT status, error_code FROM telegram_provisioning_attempts WHERE job_id = ?", (approval.job_id,)
+        ).fetchone()
+    assert (status, code) == ("ambiguous", "read_after_write_uncertain")
