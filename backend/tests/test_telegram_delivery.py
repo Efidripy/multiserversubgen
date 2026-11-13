@@ -247,3 +247,50 @@ def test_sender_uses_file_ids_for_photo_and_album():
     request = transport.requests[-1][0]
     assert request.full_url.endswith("/sendPhoto")
     assert json.loads(request.data)["photo"] == "one"
+
+
+@pytest.mark.parametrize("status", [403, 429])
+def test_interactive_failure_does_not_interrupt_update(status, caplog):
+    from services.telegram_polling import TelegramPollingWorker
+
+    class FailingTransport:
+        def open(self, request, *, timeout):
+            body = json.dumps({"parameters": {"retry_after": 17}}).encode()
+            raise HTTPError(request.full_url, status, "error", {}, io.BytesIO(body))
+
+    class Api:
+        def delete_webhook(self):
+            pass
+
+        def get_updates(self, *, offset, timeout_sec):
+            return [{"update_id": 1, "message": {}}]
+
+    actions = []
+    sender = TelegramApiSender("secret", transport=FailingTransport())
+    worker = TelegramPollingWorker(
+        api=Api(), sender=sender, timeout_sec=1,
+        handle_update=lambda update: actions.append(update["update_id"]) or [
+            TelegramOutboundMessage(987654321, "reply", edit_message_id=1)
+        ],
+    )
+    with caplog.at_level("WARNING", logger="sub_manager"):
+        worker.run_once()
+    worker.close()
+    assert actions == [1]
+    assert len(caplog.records) == 1
+    assert "987654321" not in caplog.text
+    assert str(status) in caplog.text
+    if status == 429:
+        assert "retry_after=17" in caplog.text
+
+
+def test_sender_propagates_transient_network_errors_so_the_update_is_retried():
+    from urllib.error import URLError
+
+    class _Down:
+        def open(self, request, *, timeout):
+            raise URLError("down")
+
+    sender = TelegramApiSender("test-token", transport=_Down())
+    with pytest.raises(TelegramDeliveryError):
+        sender.send(TelegramOutboundMessage(chat_id=42, text="Hello"))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import io
 from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError, URLError
 
@@ -11,7 +12,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.db_bootstrap import connect, init_db
-from services.telegram_outbox import TelegramApiOutboxPort, TelegramOutboxWorker
+from services.telegram_outbox import OutboxRateLimited, TelegramApiOutboxPort, TelegramOutboxWorker
 from services.telegram_registry import TelegramRegistry
 
 
@@ -155,12 +156,40 @@ def _http_error(code: int) -> HTTPError:
     return HTTPError("https://telegram.invalid", code, "rejected", None, None)
 
 
+def test_telegram_outbox_port_extracts_rate_limit_delay():
+    error = HTTPError("https://telegram.invalid", 429, "limited", None,
+                      io.BytesIO(b'{"parameters":{"retry_after":120}}'))
+    port = TelegramApiOutboxPort("token", transport=FailingTransport(error))
+    with pytest.raises(OutboxRateLimited) as result:
+        port.send(chat_id=42, text="test")
+    assert result.value.retry_after == 120
+
+
 def _queue_admin_event(db_path: str) -> None:
     init_db(db_path)
     with connect(db_path) as conn:
         conn.execute(
             "INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES ('admin_identity_auto_blocked', '42', 'one')"
         )
+
+
+def test_rate_limit_honours_retry_after_even_at_attempt_limit(tmp_path):
+    db_path = str(tmp_path / "rate.db")
+    _queue_admin_event(db_path)
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    error = HTTPError("https://telegram.invalid", 429, "limited", None,
+                      io.BytesIO(b'{"parameters":{"retry_after":120}}'))
+    worker = _worker(db_path, TelegramApiOutboxPort("token", transport=FailingTransport(error)),
+                     now=lambda: now, max_attempts=1)
+    assert worker.run_once().outcome == "retry"
+    with connect(db_path) as conn:
+        status, next_attempt, code = conn.execute(
+            "SELECT status, next_attempt_at, last_error_code FROM telegram_outbox"
+        ).fetchone()
+    assert status == "retry"
+    assert code == "telegram_rate_limited"
+    assert datetime.fromisoformat(next_attempt) >= (now + timedelta(seconds=120)).replace(tzinfo=None)
+    assert not worker.run_once().processed
 
 
 @pytest.mark.parametrize("code", [400, 403])
@@ -651,3 +680,16 @@ def test_broadcast_outbox_legacy_job_after_migration_sends_message(tmp_path):
     assert request.full_url.endswith("/sendMessage")
     payload = json.loads(request.data)
     assert payload["chat_id"] == 777 and payload["text"] == "News"
+
+
+def test_rate_limit_dead_letters_at_separate_attempt_limit(tmp_path):
+    db_path = str(tmp_path / "rate-limit.db")
+    _queue_admin_event(db_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_outbox SET attempt_count = 19")
+    error = HTTPError("https://telegram.invalid", 429, "limited", None,
+                      io.BytesIO(b'{"parameters":{"retry_after":120}}'))
+    worker = _worker(db_path, TelegramApiOutboxPort("token", transport=FailingTransport(error)))
+    assert worker.run_once().outcome == "dead_letter"
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT status, attempt_count FROM telegram_outbox").fetchone() == ("dead_letter", 20)

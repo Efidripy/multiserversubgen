@@ -5,6 +5,7 @@ import sys
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -24,6 +25,24 @@ from services.telegram_registration import (
 from services.telegram_registry import LifecycleUnavailableError, TelegramRegistry
 from services.telegram_provisioning import ExistingRemoteBinding, ProvisioningRemoteError
 from services.telegram_qr import TelegramQrError
+
+
+@pytest.mark.parametrize("callback", [
+    "admin:issue-action:retry:1:1", "admin:notice:disable:1", "admin:broadcast-confirm",
+    "admin:support-reply-confirm", "admin:message-confirm", "admin:customer-repair:1:0",
+    "admin:node-toggle:1:0", "admin:node-bulk-confirm:add_all:1:0", "admin:new-confirm:1:1:0",
+    "admin:existing-confirm:1:1:1:0", "admin:existing-discovered-confirm:1:1:0",
+    "admin:existing-deferred-confirm:1:1:0", "admin:reject:1:1:0", "admin:block:1:1:0",
+    "admin:unblock:1:1:0", "admin:customer-delete-confirm:1:1:0",
+    "admin:customer-op-confirm:1:1:suspend:0", "admin:cn:1:1:add:0",
+    "admin:cn-confirm:1:1:suspend:0", "admin:broadcast:new", "admin:support-reply:1:1:1:0",
+    "admin:customer-note:1:0", "admin:node-bulk:add_all:1:0", "admin:new:1:1:0",
+    "admin:new-use:1:1:0", "admin:new-input:1:1:0", "admin:existing:1:1:0",
+    "admin:customer-delete:1:1:0", "admin:notice:edit:1", "admin:message:1:0",
+])
+def test_admin_mutating_callbacks_reject_non_admin_before_registry_access(callback):
+    service = TelegramRegistrationService(object(), introduction_max_chars=700, primary_admin_id=1)
+    assert service._handle_admin(user_id=2, chat_id=2, update_id=1, text=None, callback_data=callback) is None
 
 
 def _message(update_id: int, text: str) -> dict:
@@ -1287,7 +1306,7 @@ def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
         for row in card[0].reply_markup["inline_keyboard"] for button in row
     )
     assert any(
-        button["callback_data"] == f"admin:cn:{customer_id}:1:add:0"
+        button["callback_data"] == f"admin:cn:{customer_id}:1:add:1:0"
         for row in card[0].reply_markup["inline_keyboard"] for button in row
     )
 
@@ -2170,7 +2189,8 @@ def test_primary_admin_can_toggle_only_a_compatible_node_from_the_bot(tmp_path):
     home = service.handle_update(_admin_message(30, "/admin"))
     nodes = service.handle_update(_admin_callback(31, "admin:nodes:0"))
     detail = service.handle_update(_admin_callback(32, "admin:node:1:0"))
-    toggled = service.handle_update(_admin_callback(33, "admin:node-toggle:1:0"))
+    toggled = service.handle_update(_admin_callback(33, "admin:node-toggle:1:0:0"))
+    service.handle_update(_admin_callback(34, "admin:node-toggle:1:0:0"))
 
     assert "управление" in home[0].text.lower()
     assert "tg-ноды" in nodes[0].text.lower()
@@ -3472,9 +3492,9 @@ def test_admin_node_errors_are_explained_and_logged(tmp_path, monkeypatch, caplo
         raise LifecycleUnavailableError(reject.reason)
     monkeypatch.setattr(registry, "preview_customer_node_operation", reject)
     reject.reason = "this node already has an active operation"
-    first = service.handle_update(_admin_callback(302, f"admin:cn:{customer_id}:1:suspend:0"))[0]
+    first = service.handle_update(_admin_callback(302, f"admin:cn:{customer_id}:1:suspend:1:0"))[0]
     reject.reason = "node binding has no exact confirmed remote target"
-    second = service.handle_update(_admin_callback(303, f"admin:cn:{customer_id}:1:suspend:0"))[0]
+    second = service.handle_update(_admin_callback(303, f"admin:cn:{customer_id}:1:suspend:1:0"))[0]
     assert "уже идёт операция" in first.text
     assert "Сверку записей" in second.text
     assert "active operation" in caplog.text and "confirmed remote target" in caplog.text
@@ -3500,3 +3520,25 @@ def test_admin_customer_repair_button_reports_fixed_and_remaining(tmp_path):
     result = service.handle_update(_admin_callback(901, button["callback_data"]))[0]
     assert "Первичная настройка отмечена завершённой" in result.text
     assert "node-two" in result.text and "запустите сверку" in result.text
+
+
+@pytest.mark.parametrize("callback", [
+    "admin:cn:1:1:add:1:0", "admin:cn:1:1:suspend:1:0",
+    "admin:cn-confirm:1:1:suspend:1:0", "admin:customer-delete:1:1:0",
+    "admin:customer-op:1:1:suspend:0", "admin:customer-op-confirm:1:1:suspend:0",
+])
+def test_stale_customer_card_does_not_queue_operation(tmp_path, monkeypatch, callback):
+    db_path = str(tmp_path / "stale.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(email_display="test-user", origin="manual", email_source="admin", public_code="test-user")
+    assert customer_id == 1
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customers SET row_version = 2 WHERE id = 1")
+    monkeypatch.setattr(registry, "preview_customer_operation", lambda **kwargs: SimpleNamespace(expected_customer_version=2))
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    result = service._handle_admin(user_id=100000001, chat_id=100000001, update_id=1, text=None, callback_data=callback)
+    assert result[0].text == "\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0430 \u0443\u0441\u0442\u0430\u0440\u0435\u043b\u0430, \u043e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \u0437\u0430\u043d\u043e\u0432\u043e."
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT row_version FROM customers WHERE id = 1").fetchone()[0] == 2
+        assert conn.execute("SELECT count(*) FROM telegram_customer_operations").fetchone()[0] == 0
