@@ -917,10 +917,13 @@ class TelegramProvisioningWorker:
                 (claimed.job_id,),
             ).fetchone()
             source_target_id = int(source[0]) if source is not None and source[0] is not None else None
-            if claimed.attempt_count >= TelegramExistingDiscoveryWorker.MAX_RETRYABLE_ATTEMPTS:
-                terminal_code = "node_unreachable" if error_code in {
-                    "remote_read_uncertain", "inbound_contract_uncertain"
-                } else error_code
+            # Only failures that happen before any write may become terminal for ordinary jobs;
+            # after an uncertain write the attempt must keep reconciling so the client is not orphaned.
+            read_only_failure = error_code in {"remote_read_uncertain", "inbound_contract_uncertain"}
+            if claimed.attempt_count >= TelegramExistingDiscoveryWorker.MAX_RETRYABLE_ATTEMPTS and (
+                read_only_failure or source_target_id is not None
+            ):
+                terminal_code = "node_unreachable" if read_only_failure else error_code
                 conn.execute(
                     "UPDATE telegram_provisioning_attempts SET status = 'failed', error_code = ?, error_summary = NULL, "
                     "next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
