@@ -2055,3 +2055,29 @@ def test_repair_treats_missing_binding_on_disabled_node_as_note(tmp_path):
     result = registry.repair_customer(customer_id, "admin")
     assert {"code": "binding_absent", "node_name": "node-two"} in result["notes"]
     assert not any(p["code"] == "binding_missing" for p in result["problems"])
+
+
+def test_resume_is_allowed_for_a_binding_disabled_on_the_panel(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "edge-a")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="panel-off-user", origin="manual", email_source="admin", public_code="panel-off-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+               VALUES (?, 1, 1, 'remote-id', 'remote-sub', 'panel-off-user',
+                       'admin_confirmed', 'confirmed', 0, 1)""",
+            (customer_id,),
+        )
+    preview = registry.preview_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="resume_node")
+    assert preview.expected_customer_version
+    # A never-enabled adopted client (last_enabled = 0) still cannot be "resumed".
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customer_node_bindings SET last_enabled = 0")
+    with pytest.raises(Exception):
+        registry.preview_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="resume_node")

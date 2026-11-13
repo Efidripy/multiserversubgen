@@ -7511,7 +7511,7 @@ class TelegramRegistry:
             """
             SELECT b.id, b.node_id, n.name, b.inbound_id, b.remote_client_id,
                    b.remote_sub_id, b.remote_email, b.management_state,
-                   b.desired_enabled, b.suspended_by_operation_id
+                   b.desired_enabled, b.suspended_by_operation_id, b.last_enabled
             FROM customer_node_bindings AS b
             JOIN nodes AS n ON n.id = b.node_id
             WHERE b.customer_id = ? AND b.node_id = ? AND b.inbound_id = 1
@@ -7528,9 +7528,10 @@ class TelegramRegistry:
             action = "set_enabled_false"
             previous_enabled = None
         else:
-            if bool(binding[8]) or binding[9] is None:
+            panel_disabled = not bool(binding[8]) and binding[9] is None and binding[10] == 1
+            if bool(binding[8]) or (binding[9] is None and not panel_disabled):
                 raise LifecycleUnavailableError("customer is not suspended by a node operation")
-            previous = conn.execute(
+            previous = None if panel_disabled else conn.execute(
                 """
                 SELECT a.previous_enabled
                 FROM telegram_customer_operation_attempts AS a
@@ -7541,6 +7542,9 @@ class TelegramRegistry:
                 """,
                 (int(binding[0]),),
             ).fetchone()
+            if panel_disabled:
+                # Disabled by hand on the panel (drift sync recorded it as previously enabled): Resume re-enables.
+                previous = (1,)
             if previous is None or previous[0] is None:
                 raise LifecycleUnavailableError("suspend snapshot is unavailable")
             action = "restore_previous_enabled"
