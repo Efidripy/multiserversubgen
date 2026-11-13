@@ -63,7 +63,10 @@ class TelegramRetentionService:
 
 
 def maintain_database_batch(db_path: str, retention_days: int = 30, batch_size: int = 500) -> int:
-    """Remove a bounded batch of terminal Telegram records per transaction."""
+    """Remove a bounded batch of terminal Telegram records per transaction.
+
+    Provisioning jobs and attempts are kept: reminders derive expiry and quotas from them.
+    """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, retention_days))).strftime("%Y-%m-%d %H:%M:%S")
     statements = (
         "DELETE FROM telegram_updates WHERE update_id IN (SELECT update_id FROM telegram_updates u "
@@ -71,13 +74,6 @@ def maintain_database_batch(db_path: str, retention_days: int = 30, batch_size: 
         "AND NOT EXISTS (SELECT 1 FROM telegram_update_responses r WHERE r.update_id = u.update_id AND r.status != 'sent') LIMIT ?)",
         "DELETE FROM telegram_outbox WHERE id IN (SELECT id FROM telegram_outbox "
         "WHERE status IN ('sent', 'cancelled') AND updated_at < ? LIMIT ?)",
-        "DELETE FROM telegram_provisioning_attempts WHERE id IN (SELECT a.id FROM telegram_provisioning_attempts a "
-        "JOIN telegram_provisioning_jobs j ON j.id = a.job_id "
-        "WHERE j.status IN ('succeeded', 'cancelled') AND j.finished_at < ? "
-        "AND a.status IN ('succeeded', 'skipped') LIMIT ?)",
-        "DELETE FROM telegram_provisioning_jobs WHERE id IN (SELECT id FROM telegram_provisioning_jobs j "
-        "WHERE status IN ('succeeded', 'cancelled') AND finished_at < ? "
-        "AND NOT EXISTS (SELECT 1 FROM telegram_provisioning_attempts a WHERE a.job_id = j.id) LIMIT ?)",
     )
     total = 0
     for sql in statements:

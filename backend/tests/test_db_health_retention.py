@@ -78,7 +78,7 @@ def test_audit_recovers_after_lock(tmp_path, monkeypatch):
         assert conn.execute("SELECT count(*) FROM audit_events").fetchone() == (1,)
 
 
-def test_retention_batches_completed_jobs_and_preserves_pending_attempts(tmp_path):
+def test_retention_keeps_provisioning_snapshots_used_by_reminders(tmp_path):
     path = str(tmp_path / "admin.db")
     with connect(path) as conn:
         conn.execute("CREATE TABLE telegram_updates (update_id INTEGER, status TEXT, processed_at TEXT)")
@@ -90,5 +90,5 @@ def test_retention_batches_completed_jobs_and_preserves_pending_attempts(tmp_pat
         conn.executemany("INSERT INTO telegram_provisioning_attempts VALUES (?, ?, ?)", [(1, 1, 'succeeded'), (2, 1, 'pending'), (3, 2, 'succeeded')])
     maintain_database_batch(path, batch_size=1)
     with connect(path) as conn:
-        assert conn.execute("SELECT id FROM telegram_provisioning_attempts ORDER BY id").fetchall() == [(2,), (3,)]
+        assert conn.execute("SELECT id FROM telegram_provisioning_attempts ORDER BY id").fetchall() == [(1,), (2,), (3,)]
         assert conn.execute("SELECT id FROM telegram_provisioning_jobs ORDER BY id").fetchall() == [(1,), (2,)]
