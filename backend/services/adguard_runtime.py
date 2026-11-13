@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import requests
 from core.lifecycle_work import LifecycleWorkAdmissionClosed
+from services.db_bootstrap import connect
 from shared.security import validate_and_resolve_outbound_url
 
 
@@ -110,7 +111,7 @@ class AdGuardRuntime:
         }
 
     def list_sources(self, include_password: bool = False) -> List[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -129,7 +130,7 @@ class AdGuardRuntime:
         return result
 
     def list_enabled_sources_raw(self) -> List[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -175,7 +176,7 @@ class AdGuardRuntime:
             "top_clients": snapshot.get("top_clients", []),
             "status": snapshot.get("status", {}),
         }
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO adguard_history (
@@ -395,7 +396,7 @@ class AdGuardRuntime:
             params.append(int(source_id))
         sql += " ORDER BY source_id ASC, ts ASC"
 
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(sql, params).fetchall()
 
