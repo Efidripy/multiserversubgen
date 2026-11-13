@@ -383,8 +383,10 @@ Write-Step 'Post-check: journalctl, service, version and storage'
 $PostCheck = Join-Path $ScriptDir 'post-check.sh'
 $sshArgs = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-p', "$($T.Port)")
 if ($ResolvedKeyPath) { $sshArgs += '-i', $ResolvedKeyPath }
-$sshArgs += "$($T.User)@$($T.HostName)", 'bash -s'
-Get-Content -LiteralPath $PostCheck -Raw | & ssh @sshArgs
+# Send the script as base64 so Windows PowerShell cannot add a CR/LF to the piped text.
+$PostCheckB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($PostCheck))
+$sshArgs += "$($T.User)@$($T.HostName)", "echo $PostCheckB64 | base64 -d | bash"
+& ssh @sshArgs
 if ($LASTEXITCODE -ne 0) { Fail 'Post-check failed; cleanup was skipped.' }
 
 # ---------------------------------------------------------------------------
