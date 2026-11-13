@@ -27,17 +27,15 @@ def test_metrics_migration_and_repeat(tmp_path):
         assert conn.execute("SELECT node_name FROM node_history").fetchall() == [("node",)]
 
 
-def test_incomplete_metrics_migration_preserves_admin(tmp_path):
+def test_retry_replaces_stale_metrics(tmp_path):
     admin, metrics = tmp_path / "admin.db", tmp_path / "metrics.db"
     _seed(admin)
     init_metrics_db(str(metrics))
     with connect(str(metrics)) as conn:
         conn.execute("INSERT INTO node_history VALUES(1,2,1,'different',1,1,0,0,0,0)")
-    with pytest.raises(RuntimeError, match="verification failed"):
-        migrate_metrics_db(str(admin), str(metrics), batch_size=1)
-    with connect(str(admin)) as conn:
+    migrate_metrics_db(str(admin), str(metrics), batch_size=1)
+    with connect(str(metrics)) as conn:
         assert conn.execute("SELECT node_name FROM node_history").fetchall() == [("node",)]
-        assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='node_history_migrated'").fetchone()
 
 
 def test_metrics_writer_does_not_block_on_admin_writer(tmp_path):
@@ -90,7 +88,7 @@ def test_interrupted_batch_copy_preserves_admin(tmp_path, monkeypatch):
     def interrupted(path):
         nonlocal calls
         calls += 1
-        if calls == 3:
+        if calls == 4:
             raise sqlite3.OperationalError("simulated interruption")
         return original(path)
 
@@ -100,7 +98,15 @@ def test_interrupted_batch_copy_preserves_admin(tmp_path, monkeypatch):
     with connect(str(admin)) as conn:
         assert conn.execute("SELECT COUNT(*) FROM node_history").fetchone()[0] == 2
         assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='node_history_migrated'").fetchone()
+    with connect(str(admin)) as conn:
+        conn.execute("UPDATE node_history SET node_name='changed' WHERE id=1")
+        conn.execute("DELETE FROM node_history WHERE id=2")
+        expected = conn.execute("SELECT * FROM node_history").fetchall()
     monkeypatch.setattr(db_bootstrap, "connect_metrics", original)
     migrate_metrics_db(str(admin), str(metrics), batch_size=1)
+    migrate_metrics_db(str(admin), str(metrics), batch_size=1)
     with connect(str(metrics)) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM node_history").fetchone()[0] == 2
+        assert conn.execute("SELECT * FROM node_history").fetchall() == expected
+    with connect(str(admin)) as conn:
+        assert conn.execute("SELECT * FROM node_history_migrated").fetchall() == expected
+        assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='node_history'").fetchone()

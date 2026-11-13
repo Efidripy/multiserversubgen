@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 import os
+import shutil
 import sqlite3
 import sys
 import time
@@ -1679,9 +1680,24 @@ def _read_metrics(path: str) -> int:
 
 
 def _backup_metrics(source: sqlite3.Connection, path: str) -> None:
-    with closing(sqlite3.connect(path)) as target:
-        source.backup(target)
-    _read_metrics(path)
+    expected_count = _metrics_count(source)
+    stamp = f"{time.time_ns()}-{os.getpid()}"
+    temporary = f"{path}.restore-{stamp}"
+    try:
+        with closing(sqlite3.connect(temporary)) as target:
+            source.backup(target)
+        if _read_metrics(temporary) != expected_count:
+            raise ValueError("metrics recovery count mismatch")
+        if os.path.exists(path):
+            shutil.copy2(path, f"{path}.corrupt-{stamp}")
+        for suffix in ("-wal", "-shm"):
+            sidecar = path + suffix
+            if os.path.exists(sidecar):
+                os.replace(sidecar, f"{path}.corrupt-{stamp}{suffix}")
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def _recover_metrics(db_path: str, metrics_path: str, names: set[str], logger: logging.Logger,
@@ -1809,7 +1825,7 @@ def migrate_metrics_db(db_path: str, metrics_db_path: str, batch_size: int = 500
     """Copy and verify all legacy tables before atomically renaming any of them.
 
     The caller must ensure there are no active application writers during startup.
-    An exception leaves the legacy tables in place; a retry resumes using primary keys.
+    An exception leaves the legacy tables in place; a retry copies them again.
     """
     if os.path.abspath(db_path) == os.path.abspath(metrics_db_path):
         raise ValueError("metrics database must be separate from admin database")
@@ -1821,6 +1837,9 @@ def migrate_metrics_db(db_path: str, metrics_db_path: str, batch_size: int = 500
         tables = [name for name in _METRICS_TABLES if name in existing]
         if any(name + "_migrated" in existing for name in tables):
             raise RuntimeError("both legacy and migrated metrics tables exist")
+        with connect_metrics(metrics_db_path) as target:
+            for name in tables:
+                target.execute(f'DELETE FROM "{name}"')
         for name in tables:
             columns = [row[1] for row in source.execute(f'PRAGMA table_info("{name}")')]
             quoted = ", ".join('"' + col.replace('"', '""') + '"' for col in columns)

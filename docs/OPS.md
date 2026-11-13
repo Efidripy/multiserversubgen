@@ -336,6 +336,7 @@ the admin and metrics directories and their `backups` subdirectories. It
 restores the valid candidate with the most rows, using modification time to
 break ties. Otherwise it restores the retained `*_migrated` tables. These
 tables are retained and represent the original migration point.
+An invalid metrics database is preserved alongside it as `metrics.db.corrupt-*`.
 
 If neither source exists, `METRICS_DB_AUTO_CREATE=1` (the default) creates
 an empty metrics database. Set it to `0` to start without an attached metrics
