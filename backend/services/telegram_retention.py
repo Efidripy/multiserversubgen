@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -82,14 +83,25 @@ def maintain_database_batch(db_path: str, retention_days: int = 30, batch_size: 
     return total
 
 
-def checkpoint_database(db_path: str) -> None:
-    with connect(db_path) as conn:
-        result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-    def size(path: str) -> int:
-        try:
-            return os.path.getsize(path)
-        except FileNotFoundError:
-            return 0
-    logging.getLogger("sub_manager").info(
-        "SQLite size: db=%s bytes wal=%s bytes checkpoint_busy=%s", size(db_path), size(db_path + "-wal"), result[0]
-    )
+_checkpoint_lock = threading.Lock()
+
+
+def checkpoint_database(db_path: str, truncate: bool = True, log_sizes: bool = True) -> int:
+    with _checkpoint_lock:
+        with connect(db_path) as conn:
+            mode = "TRUNCATE" if truncate else "PASSIVE"
+            result = conn.execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
+            def size(path: str) -> int:
+                try:
+                    return os.path.getsize(path)
+                except FileNotFoundError:
+                    return 0
+            db_size, wal_size = size(db_path), size(db_path + "-wal")
+            logger = logging.getLogger("sub_manager")
+            if log_sizes:
+                logger.info(
+                    "SQLite size: db=%s bytes wal=%s bytes checkpoint_busy=%s", db_size, wal_size, result[0]
+                )
+            if wal_size > 256 * 1024 * 1024:
+                logger.warning("SQLite WAL exceeds 256 MB: %s bytes", wal_size)
+            return result[0]
