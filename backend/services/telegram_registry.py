@@ -8588,7 +8588,7 @@ class TelegramRegistry:
                     f"""
                     UPDATE telegram_drift_findings SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP,
                         row_version = row_version + 1
-                    WHERE status = 'open' AND node_id IN ({placeholders}) AND finding_key NOT IN ({key_placeholders})
+                    WHERE status IN ('open', 'ignored') AND node_id IN ({placeholders}) AND finding_key NOT IN ({key_placeholders})
                     """,
                     (*node_ids, *current_keys),
                 )
@@ -8597,7 +8597,7 @@ class TelegramRegistry:
                     f"""
                     UPDATE telegram_drift_findings SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP,
                         row_version = row_version + 1
-                    WHERE status = 'open' AND node_id IN ({placeholders})
+                    WHERE status IN ('open', 'ignored') AND node_id IN ({placeholders})
                     """,
                     node_ids,
                 )

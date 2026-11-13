@@ -563,3 +563,25 @@ def test_telegram_scheduled_drift_counts_only_new_findings(tmp_path):
     scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{'id': 1}], client_manager=Manager())
     assert scanner.scan_if_idle()[1] == 1
     assert scanner.scan_if_idle()[1] == 0
+
+
+def test_ignored_missing_finding_does_not_pin_binding_after_client_returns(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    remote: list[dict] = []
+
+    class Manager:
+        def get_node_clients_strict(self, node):
+            return list(remote)
+
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
+    scanner.scan()
+    finding = registry.list_drift_findings(status="open", limit=10)[0]
+    registry.resolve_drift_finding(
+        finding_id=finding.finding_id, expected_row_version=finding.row_version, status="ignored", resolved_by="admin"
+    )
+    remote.append({"inbound_id": 1, "id": "remote-1", "subId": "sub-1", "email": "ops-user", "flow": "xtls-rprx-vision", "enable": True})
+    scanner.scan()
+    scanner.scan()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state FROM customer_node_bindings").fetchone()[0] == "confirmed"
+        assert conn.execute("SELECT status FROM telegram_drift_findings").fetchone()[0] == "resolved"
