@@ -372,6 +372,9 @@ class AppSettings:
     node_history_enabled: bool
     node_history_min_interval_sec: int
     node_history_retention_days: int
+    metrics_db_path: str
+    metrics_db_split_enabled: bool
+    metrics_db_auto_create: bool
     db_checkpoint_interval_sec: int
     audit_queue_batch_size: int
     audit_memory_queue_max_size: int
@@ -442,6 +445,9 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         node_history_enabled=_env_bool("NODE_HISTORY_ENABLED", "true"),
         node_history_min_interval_sec=int(os.getenv("NODE_HISTORY_MIN_INTERVAL_SEC", "30")),
         node_history_retention_days=int(os.getenv("NODE_HISTORY_RETENTION_DAYS", "30")),
+        metrics_db_path=os.getenv("METRICS_DB_PATH", "").strip() or os.path.join(project_dir, "metrics.db"),
+        metrics_db_split_enabled=_env_bool("METRICS_DB_SPLIT_ENABLED", "1"),
+        metrics_db_auto_create=_env_bool("METRICS_DB_AUTO_CREATE", "1"),
         db_checkpoint_interval_sec=max(0, int(os.getenv("DB_CHECKPOINT_INTERVAL_SEC", "300"))),
         audit_queue_batch_size=int(os.getenv("AUDIT_QUEUE_BATCH_SIZE", "200")),
         audit_memory_queue_max_size=int(os.getenv("AUDIT_MEMORY_QUEUE_MAX", "2000")),

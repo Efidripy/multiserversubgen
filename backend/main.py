@@ -32,7 +32,7 @@ from modules.auth.service import (
     parse_mfa_users,
 )
 from services.db_bootstrap import (
-    init_db as bootstrap_db,
+    initialize_databases,
     sync_node_history_names_with_nodes as sync_node_history_names_with_nodes_db,
 )
 from services.node_access import get_node_or_404
@@ -348,7 +348,10 @@ HTTP_REQUEST_LATENCY = metrics.http_request_latency
     logger=logger,
 )
 
-bootstrap_db(DB_PATH)
+initialize_databases(
+    DB_PATH, SETTINGS.metrics_db_path, SETTINGS.metrics_db_split_enabled, logger,
+    auto_create=SETTINGS.metrics_db_auto_create,
+)
 telegram_traffic_reconciler = TelegramTrafficService(
     TelegramRegistry(DB_PATH), projection_loader=snapshot_collector.latest_snapshot
 )

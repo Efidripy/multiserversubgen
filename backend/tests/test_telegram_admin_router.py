@@ -687,9 +687,11 @@ def test_telegram_workers_route_structure(tmp_path):
     from core import worker_health
 
     worker_health.register("test.admin.worker", 60)
+    worker_health.set_operator_note("metrics_db_created_empty", "History is empty")
     response = _build_client(tmp_path).get("/api/v1/telegram/workers")
     assert response.status_code == 200
-    record = next(item for item in response.json() if item["name"] == "test.admin.worker")
+    assert any(note["name"] == "metrics_db_created_empty" for note in response.json()["operator_notes"])
+    record = next(item for item in response.json()["workers"] if item["name"] == "test.admin.worker")
     assert set(record) == {"name", "interval_sec", "last_start_at", "last_success_at",
                            "last_error_code", "consecutive_failures", "healthy"}
 

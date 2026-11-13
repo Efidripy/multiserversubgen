@@ -294,3 +294,53 @@ the encryption key (`ENCRYPTION_KEY` or the separately managed key file) and
 the deployment environment configuration backed up separately and protected;
 these scripts neither read nor include them. Store backups securely and follow
 the existing recovery procedure before replacing a live database.
+
+The backup tools can also copy and check a separate metrics database:
+
+```sh
+python3 scripts/deploy/sqlite-backup.py /opt/sub-manager/admin.db /secure/admin.db --metrics-database /opt/sub-manager/metrics.db --metrics-backup /secure/metrics.db
+python3 scripts/deploy/sqlite-restore-check.py /secure/admin.db --metrics-backup /secure/metrics.db
+```
+
+The copies are taken sequentially, not as one cross-file snapshot; stop writers
+first if a coordinated point in time is required. If the second copy fails,
+the first backup remains and should be handled separately.
+
+The application migrates metrics on startup and attaches `metrics.db` by default.
+Test the migration and backup/restore on vm3 first, then deploy to production.
+Keep the `*_migrated` tables until the data and backups have been verified.
+
+To roll back, stop all writers, preserve both databases, set
+`METRICS_DB_SPLIT_ENABLED=0`, and run the following SQL on `admin.db` before
+starting the application:
+
+```sql
+BEGIN;
+ALTER TABLE node_history_migrated RENAME TO node_history;
+ALTER TABLE adguard_history_migrated RENAME TO adguard_history;
+ALTER TABLE traffic_samples_migrated RENAME TO traffic_samples;
+ALTER TABLE traffic_stats_snapshots_migrated RENAME TO traffic_stats_snapshots;
+COMMIT;
+```
+
+These tables reflect the migration point; reconcile later metrics separately.
+Only after verification and an independent backup should an operator manually
+drop the `*_migrated` tables with SQLite.
+
+
+### Metrics database recovery
+
+If the configured metrics database is missing or incomplete at startup, the
+service checks `metrics*.db`, `metrics*.db.bak` and `metrics*.db.backup` in
+the admin and metrics directories and their `backups` subdirectories. It
+restores the valid candidate with the most rows, using modification time to
+break ties. Otherwise it restores the retained `*_migrated` tables. These
+tables are retained and represent the original migration point.
+
+If neither source exists, `METRICS_DB_AUTO_CREATE=1` (the default) creates
+an empty metrics database. Set it to `0` to start without an attached metrics
+database, using empty local history tables instead. The Telegram workers API
+reports recovery, empty creation, or disabled storage in `operator_notes`.
+If local history tables coexist with retained migrated tables, reconcile the
+local history before enabling the split; the service keeps using local tables.
+Review the warning and restore a suitable backup when history is needed.
