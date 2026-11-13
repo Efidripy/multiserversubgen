@@ -490,6 +490,21 @@ def test_repeated_missing_scan_preserves_binding_and_audit(tmp_path):
     with connect(db_path) as conn:
         conn.execute("UPDATE customer_node_bindings SET desired_enabled = 0")
 
+    class Manager:
+        def get_node_clients_strict(self, node):
+            return []
+
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
+    scanner.scan()
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customer_node_bindings SET updated_at = '2000-01-01 00:00:00'")
+        before = conn.execute("SELECT management_state, row_version, updated_at FROM customer_node_bindings").fetchone()
+    scanner.scan()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state, row_version, updated_at FROM customer_node_bindings").fetchone() == before
+        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_missing'").fetchone()[0] == 1
+
+
 def test_drift_unavailable_node_does_not_block_other_nodes(tmp_path):
     db_path, registry, customer_id = _customer_with_binding(tmp_path)
     with connect(db_path) as conn:
@@ -544,16 +559,6 @@ def test_telegram_scheduled_drift_counts_only_new_findings(tmp_path):
     class Manager:
         def get_node_clients_strict(self, node):
             return []
-
-    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
-    scanner.scan()
-    with connect(db_path) as conn:
-        conn.execute("UPDATE customer_node_bindings SET updated_at = '2000-01-01 00:00:00'")
-        before = conn.execute("SELECT management_state, row_version, updated_at FROM customer_node_bindings").fetchone()
-    scanner.scan()
-    with connect(db_path) as conn:
-        assert conn.execute("SELECT management_state, row_version, updated_at FROM customer_node_bindings").fetchone() == before
-        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_missing'").fetchone()[0] == 1
 
     scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{'id': 1}], client_manager=Manager())
     assert scanner.scan_if_idle()[1] == 1
