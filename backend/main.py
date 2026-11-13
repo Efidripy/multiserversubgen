@@ -819,8 +819,12 @@ async def _audit_health_loop(tracker):
             logger.warning("Audit worker failed: %s", type(exc).__name__)
             delay = AUDIT_IDLE_SLEEP_SEC
         else:
-            worker_health.mark_success(name)
-            delay = AUDIT_ACTIVE_SLEEP_SEC if persisted > 0 or drained > 0 else AUDIT_IDLE_SLEEP_SEC
+            if persisted == 0 and audit_runtime.has_retained_batch():
+                worker_health.mark_failure(name, "persist_failed")
+                delay = AUDIT_IDLE_SLEEP_SEC
+            else:
+                worker_health.mark_success(name)
+                delay = AUDIT_ACTIVE_SLEEP_SEC if persisted > 0 or drained > 0 else AUDIT_IDLE_SLEEP_SEC
         if not await tracker.wait_or_stop(delay):
             return
 
