@@ -115,9 +115,10 @@ def _fresh_snapshot_has_client(conn, node_id: int, remote_client_id: str) -> boo
     while stack:
         item = stack.pop()
         if isinstance(item, dict):
-            if "email" in item and "uuid" in item:
+            # Panel clients carry their identifier as "id" (inbound settings) or "uuid" (flattened rows).
+            if "email" in item and ("uuid" in item or "id" in item):
                 seen_any = True
-                if str(item["uuid"]).strip().lower() == wanted:
+                if wanted in {str(item[key]).strip().lower() for key in ("uuid", "id") if key in item}:
                     return True
             stack.extend(item.values())
         elif isinstance(item, list):

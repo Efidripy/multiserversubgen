@@ -2009,3 +2009,17 @@ def test_repair_reports_really_absent_client_as_a_note_not_a_problem(tmp_path):
     result = registry.repair_customer(customer_id, "admin")
     assert {"code": "binding_absent", "node_name": "node-two"} in result["notes"]
     assert not any(p["code"] == "binding_missing" for p in result["problems"])
+
+
+def test_repair_recognises_client_id_field_of_inbound_settings_snapshots(tmp_path):
+    import json as _json
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'rc-1', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+        conn.execute(
+            "INSERT OR REPLACE INTO node_snapshots (node_id, status_data, is_online, updated_at) VALUES (2, ?, 1, CURRENT_TIMESTAMP)",
+            (_json.dumps({"inbounds": [{"settings": {"clients": [{"id": "RC-1", "email": "repair-user"}]}}]}),),
+        )
+    assert registry.repair_customer(customer_id, "admin")["healed_nodes"] == ["node-two"]
