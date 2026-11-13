@@ -7362,7 +7362,8 @@ class TelegramRegistry:
         rows = conn.execute(
             """
             SELECT b.id, b.node_id, n.name, b.inbound_id, b.remote_client_id, b.remote_sub_id,
-                   b.remote_email, b.management_state, b.desired_enabled, b.suspended_by_operation_id
+                   b.remote_email, b.management_state, b.desired_enabled, b.suspended_by_operation_id,
+                   b.last_enabled
             FROM customer_node_bindings AS b
             JOIN nodes AS n ON n.id = b.node_id
             WHERE b.customer_id = ?
@@ -7382,7 +7383,12 @@ class TelegramRegistry:
             management_state = str(row[7])
             suspended_by_operation_id = int(row[9]) if row[9] is not None else None
 
-            if operation_type == "resume" and suspended_by_operation_id is None:
+            # Disabled by hand on the panel (drift sync keeps last_enabled = 1): global resume re-enables it too.
+            panel_disabled = (
+                operation_type == "resume" and suspended_by_operation_id is None
+                and not bool(row[8]) and row[10] == 1
+            )
+            if operation_type == "resume" and suspended_by_operation_id is None and not panel_disabled:
                 continue
             if management_state != "confirmed" or not remote_client_id:
                 blocked_binding_ids.append(binding_id)
@@ -7401,6 +7407,8 @@ class TelegramRegistry:
                     """,
                     (binding_id,),
                 ).fetchone()
+                if panel_disabled:
+                    previous = (1,)
                 if previous is None or previous[0] is None:
                     blocked_binding_ids.append(binding_id)
                     continue

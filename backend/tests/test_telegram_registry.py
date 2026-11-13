@@ -2081,3 +2081,25 @@ def test_resume_is_allowed_for_a_binding_disabled_on_the_panel(tmp_path):
         conn.execute("UPDATE customer_node_bindings SET last_enabled = 0")
     with pytest.raises(Exception):
         registry.preview_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="resume_node")
+
+
+def test_global_resume_includes_binding_disabled_by_hand_after_a_panel_toggle(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "edge-a")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="toggle-user", origin="manual", email_source="admin", public_code="toggle-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+               VALUES (?, 1, 1, 'remote-id', 'remote-sub', 'toggle-user',
+                       'admin_confirmed', 'confirmed', 0, 1)""",
+            (customer_id,),
+        )
+        conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
+    preview = registry.preview_customer_operation(customer_id=customer_id, operation_type="resume")
+    assert len(preview.targets) == 1 and preview.targets[0].action == "restore_previous_enabled"
