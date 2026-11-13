@@ -13,6 +13,7 @@ from services.subscription_devices import (
 )
 from services.subscription_client_settings import default_settings, device_app_name
 from services.db_bootstrap import connect
+from services import subscription_devices
 
 
 def _section(**overrides):
@@ -143,6 +144,22 @@ def test_status_listing_limit_and_delete(tmp_path):
     assert delete_device(path, 2) is True
     assert delete_device(path, 2) is False
     assert len(list_devices(path, subject="alice")) == 2
+
+
+def test_device_writes_begin_immediate_before_any_sql(monkeypatch, tmp_path):
+    statements = []
+
+    def traced_connect(path):
+        conn = connect(path)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(subscription_devices, "connect", traced_connect)
+    path = str(tmp_path / "devices.sqlite")
+    for headers in ({"X-HWID": "device"}, {}):
+        statements.clear()
+        check_device(path, "subject", headers, _section(), now=1)
+        assert statements[0] == "BEGIN IMMEDIATE"
 
 
 def test_concurrent_new_devices_never_exceed_limit(tmp_path):
