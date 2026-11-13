@@ -679,3 +679,34 @@ def test_admin_dismiss_cancels_failed_job_so_it_leaves_attention_list(tmp_path):
     assert result.status == "cancelled"
     assert registry.get_provisioning_job(approval.job_id).status == "cancelled"
     assert registry.list_attention_items()["provisioning"] == []
+
+
+def test_initial_job_with_removed_node_completes_snapshot_and_access(tmp_path):
+    from services.telegram_access import TelegramSubscriptionAccessGate
+
+    db_path, approval, _ = _queued_job(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name) VALUES (2, 'node-two')")
+        conn.execute("UPDATE telegram_provisioning_attempts SET status = 'succeeded' WHERE job_id = ?", (approval.job_id,))
+        conn.execute("""INSERT INTO telegram_provisioning_attempts
+            (job_id, node_id, status, desired_client_id, desired_sub_id, policy_version, error_code)
+            VALUES (?, 2, 'skipped', 'id-two', 'sub-two', 1, 'node_bulk_remove_cancelled')""", (approval.job_id,))
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_sub_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 1, 'client', 'sub', 'worker-user', 'bot_provisioned', 'confirmed', 1)""", (approval.customer_id,))
+        _worker(db_path, FakeProvisioningPort())._finalize_job(conn, approval.job_id)
+        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities").fetchone()[0] == 1
+    registry = TelegramRegistry(db_path)
+    assert registry.get_customer_access(55).initial_provisioning_ready
+    assert TelegramSubscriptionAccessGate(db_path).can_serve_email("worker-user")
+    assert registry.preview_customer_node_operation(customer_id=approval.customer_id, node_id=1, operation_type="suspend_node").targets
+
+
+def test_initial_job_with_failed_attempt_does_not_complete_snapshot(tmp_path):
+    db_path, approval, _ = _queued_job(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_provisioning_attempts SET status = 'failed' WHERE job_id = ?", (approval.job_id,))
+        _worker(db_path, FakeProvisioningPort())._finalize_job(conn, approval.job_id)
+        conn.execute("UPDATE telegram_provisioning_jobs SET status = 'cancelled' WHERE id = ?", (approval.job_id,))
+        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities").fetchone()[0] == 0
+    assert not TelegramRegistry(db_path).get_customer_access(55).initial_provisioning_ready

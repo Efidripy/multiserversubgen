@@ -551,6 +551,7 @@ class TelegramRegistrationService:
                 "text": "✉ Написать в бот",
                 "callback_data": f"admin:message:{customer.customer_id}:{page}",
             }])
+        buttons.append([{"text": "🔧 Починить", "callback_data": f"admin:customer-repair:{customer.customer_id}:{page}"}])
         buttons.append([{"text": "← Назад", "callback_data": f"admin:customers:{page}"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
 
@@ -1259,6 +1260,29 @@ class TelegramRegistrationService:
                 self._registry.clear_admin_message_draft(user_id)
                 self._registry.clear_customer_note_draft(user_id)
                 return [self._admin_customer_message(chat_id, int(parts[2]), int(parts[3]))]
+            if len(parts) == 4 and parts[:2] == ["admin", "customer-repair"]:
+                customer_id, page = int(parts[2]), int(parts[3])
+                result = self._registry.repair_customer(customer_id, str(user_id))
+                lines = ["Первичная настройка отмечена завершённой" if result["fixed"] else "Чинить нечего"]
+                for problem in result["problems"]:
+                    code = problem["code"]
+                    node = problem.get("node_name") or "неизвестной ноде"
+                    messages = {
+                        "binding_missing": f"На ноде {node} клиента нет на панели — добавьте его заново или запустите сверку.",
+                        "binding_conflict": f"На ноде {node} конфликт данных — проверьте клиента и запустите сверку.",
+                        "unfinished_operation": f"На ноде {node} идёт операция #{problem.get('operation_id')} — дождитесь или закройте её в админке.",
+                        "unfinished_job": f"Задание #{problem.get('job_id')} не завершено — дождитесь его или проверьте в админке.",
+                        "initial_job_incomplete": "Первичное задание не завершено — проверьте его в админке.",
+                        "unfinished_discovery": "Сверка не завершена — проверьте её в админке.",
+                        "no_confirmed_binding": "Нет подтверждённых привязок — добавьте клиента на ноду или запустите сверку.",
+                        "identity_not_approved": "Заявка не одобрена — проверьте её в админке.",
+                        "customer_inactive": "Клиент не активен — проверьте его статус в админке.",
+                        "snapshot_incomplete": "Первичная настройка не завершена — устраните указанные проблемы.",
+                    }
+                    lines.append(messages.get(code, "Проверьте состояние клиента в админке."))
+                return [TelegramOutboundMessage(
+                    chat_id, "\n".join(lines), self._admin_customer_message(chat_id, customer_id, page).reply_markup,
+                )]
             if len(parts) == 4 and parts[:2] == ["admin", "customer-note"]:
                 customer_id, page = int(parts[2]), int(parts[3])
                 self._registry.get_customer(customer_id)

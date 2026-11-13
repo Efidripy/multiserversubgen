@@ -30,6 +30,35 @@ GUEST_LINK_DURATIONS_HOURS = frozenset({1, 3, 6, 12, 24})
 NODE_STATES = ("active", "suspended", "available_to_add", "problem")
 
 
+# SQL predicate for an initial job whose snapshot is complete. Alias: j.
+INITIAL_JOB_COMPLETE_SQL = """(j.status = 'succeeded' OR (
+    j.status IN ('cancelled', 'partial') AND j.finished_at IS NOT NULL
+    AND EXISTS (SELECT 1 FROM telegram_provisioning_attempts a
+                WHERE a.job_id = j.id AND a.status = 'succeeded')
+    AND NOT EXISTS (SELECT 1 FROM telegram_provisioning_attempts a
+                    WHERE a.job_id = j.id AND NOT (a.status = 'succeeded' OR
+                        (a.status = 'skipped' AND a.error_code IS 'node_bulk_remove_cancelled')))
+))"""
+
+
+def initial_job_incomplete(conn: sqlite3.Connection, customer_id: int) -> bool:
+    return conn.execute(
+        f"SELECT 1 FROM telegram_provisioning_jobs j WHERE j.customer_id = ? "
+        f"AND j.trigger = 'approve_new' AND NOT {INITIAL_JOB_COMPLETE_SQL} LIMIT 1",
+        (customer_id,),
+    ).fetchone() is not None
+
+
+def mark_completed_initial_snapshot(conn: sqlite3.Connection, job_id: int) -> None:
+    conn.execute(
+        f"UPDATE telegram_identities SET remote_snapshot_ready = 1, updated_at = CURRENT_TIMESTAMP "
+        f"WHERE access_status = 'approved' AND remote_snapshot_ready = 0 AND customer_id IN ("
+        f"SELECT j.customer_id FROM telegram_provisioning_jobs j WHERE j.id = ? "
+        f"AND j.trigger = 'approve_new' AND {INITIAL_JOB_COMPLETE_SQL})",
+        (job_id,),
+    )
+
+
 def _classify_customer_node_state(
     *,
     binding_present: bool,
@@ -2260,11 +2289,7 @@ class TelegramRegistry:
             # snapshot job denies access even if its identity column carries
             # the migration default.
             with connect(self._db_path) as conn:
-                pending_snapshot = conn.execute(
-                    "SELECT 1 FROM telegram_provisioning_jobs WHERE customer_id = ? "
-                    "AND trigger = 'approve_new' AND status != 'succeeded' LIMIT 1", (customer_id,)
-                ).fetchone()
-            initial_provisioning_ready = pending_snapshot is None
+                initial_provisioning_ready = not initial_job_incomplete(conn, customer_id)
         return TelegramCustomerAccess(
             telegram_user_id=int(row[0]),
             chat_id=int(row[1]),
@@ -3080,7 +3105,7 @@ class TelegramRegistry:
 
         with connect(self._db_path) as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT i.telegram_user_id, c.id, c.email_display,
                        b.node_id, b.inbound_id, b.remote_client_id,
                        a.desired_total_bytes,
@@ -3112,10 +3137,10 @@ class TelegramRegistry:
                   AND (
                     c.origin != 'telegram'
                     OR NOT EXISTS (
-                        SELECT 1 FROM telegram_provisioning_jobs AS initial_job
-                        WHERE initial_job.customer_id = c.id
-                          AND initial_job.trigger = 'approve_new'
-                          AND initial_job.status != 'succeeded'
+                        SELECT 1 FROM telegram_provisioning_jobs AS j
+                        WHERE j.customer_id = c.id
+                          AND j.trigger = 'approve_new'
+                          AND NOT {INITIAL_JOB_COMPLETE_SQL}
                     )
                   )
                 ORDER BY i.telegram_user_id, b.node_id, b.inbound_id
@@ -6288,6 +6313,13 @@ class TelegramRegistry:
                     """,
                     (normalized_node_id,),
                 )
+                for (job_id,) in conn.execute(
+                    "SELECT DISTINCT j.id FROM telegram_provisioning_jobs j "
+                    "JOIN telegram_provisioning_attempts a ON a.job_id = j.id "
+                    "WHERE a.node_id = ? AND j.trigger = 'approve_new' AND j.status = 'cancelled'",
+                    (normalized_node_id,),
+                ).fetchall():
+                    mark_completed_initial_snapshot(conn, int(job_id))
                 policy = conn.execute(
                     "SELECT node_id FROM telegram_node_policies WHERE node_id = ?", (normalized_node_id,)
                 ).fetchone()
@@ -7104,6 +7136,80 @@ class TelegramRegistry:
         if value not in {"suspend", "resume", "delete"}:
             raise TelegramRegistryError("unsupported customer lifecycle operation")
         return value
+
+    def repair_customer(self, customer_id: int, actor: str) -> dict[str, Any]:
+        customer_id = _positive_int(customer_id, "customer_id")
+        with connect(self._db_path) as conn:
+            customer = conn.execute(
+                "SELECT status, deleted_at FROM customers WHERE id = ?", (customer_id,)
+            ).fetchone()
+            if customer is None:
+                raise TelegramRegistryError("customer was not found")
+            problems: list[dict[str, Any]] = []
+            identity = conn.execute(
+                "SELECT remote_snapshot_ready FROM telegram_identities "
+                "WHERE customer_id = ? AND access_status = 'approved' LIMIT 1", (customer_id,)
+            ).fetchone()
+            if customer[0] != 'active' or customer[1] is not None:
+                problems.append({"code": "customer_inactive"})
+            if identity is None:
+                problems.append({"code": "identity_not_approved"})
+            jobs = conn.execute(
+                "SELECT id, status FROM telegram_provisioning_jobs WHERE customer_id = ? "
+                "AND trigger = 'approve_new' AND status IN ('queued', 'running', 'partial')", (customer_id,)
+            ).fetchall()
+            for job_id, status in jobs:
+                problems.append({"code": "unfinished_job", "job_id": int(job_id), "status": str(status)})
+            unresolved = conn.execute(
+                """SELECT t.id FROM telegram_existing_discovery_jobs j
+                JOIN telegram_existing_discovery_targets t ON t.job_id = j.id
+                WHERE j.customer_id = ? AND (
+                    t.status IN ('pending', 'reconciling', 'deferred', 'blocked_after_retry_limit', 'conflict')
+                    OR (t.status = 'confirmed_absent' AND EXISTS (
+                        SELECT 1 FROM telegram_provisioning_jobs p
+                        WHERE p.id = t.provisioning_job_id AND p.status != 'succeeded'
+                    ))
+                )""", (customer_id,)
+            ).fetchall()
+            for (target_id,) in unresolved:
+                problems.append({"code": "unfinished_discovery", "target_id": int(target_id)})
+            bindings = conn.execute(
+                "SELECT b.management_state, n.name FROM customer_node_bindings b "
+                "JOIN nodes n ON n.id = b.node_id WHERE b.customer_id = ?", (customer_id,)
+            ).fetchall()
+            confirmed = any(row[0] == 'confirmed' for row in bindings)
+            if not confirmed:
+                problems.append({"code": "no_confirmed_binding"})
+            for state, name in bindings:
+                if state in ('missing', 'conflict'):
+                    problems.append({"code": 'binding_' + str(state), "node_name": str(name)})
+            for operation_id, node_name in conn.execute(
+                "SELECT DISTINCT o.id, n.name FROM telegram_customer_operations o "
+                "LEFT JOIN telegram_customer_operation_attempts a ON a.operation_id = o.id "
+                "LEFT JOIN nodes n ON n.id = a.node_id WHERE o.customer_id = ? "
+                "AND o.status IN ('queued', 'running', 'partial') AND o.dismissed_at IS NULL",
+                (customer_id,),
+            ):
+                problems.append({"code": "unfinished_operation", "operation_id": int(operation_id),
+                                 "node_name": str(node_name) if node_name is not None else None})
+            changed = False
+            if (customer[0] == 'active' and customer[1] is None and identity is not None
+                    and not jobs and not unresolved and confirmed):
+                changed = bool(conn.execute(
+                    "UPDATE telegram_identities SET remote_snapshot_ready = 1, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE customer_id = ? AND access_status = 'approved' AND remote_snapshot_ready = 0",
+                    (customer_id,),
+                ).rowcount)
+                if changed:
+                    conn.execute(
+                        "INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id) "
+                        "VALUES ('customer_repaired', 'admin', ?, 'customer', ?)", (str(actor), str(customer_id))
+                    )
+            if initial_job_incomplete(conn, customer_id) and not jobs:
+                problems.append({"code": "initial_job_incomplete"})
+            if identity is not None and not bool(identity[0]) and not changed:
+                problems.append({"code": "snapshot_incomplete"})
+        return {"fixed": ["remote_snapshot_ready"] if changed else [], "problems": problems}
 
     def _customer_operation_snapshot(
         self,
@@ -7999,15 +8105,7 @@ class TelegramRegistry:
         customer = self.get_customer(customer_id)
         profile = self.get_customer_telegram_profile(customer.customer_id)
         with connect(self._db_path) as conn:
-            initial_job = conn.execute(
-                """
-                SELECT status FROM telegram_provisioning_jobs
-                WHERE customer_id = ? AND trigger = 'approve_new'
-                ORDER BY id ASC LIMIT 1
-                """,
-                (customer.customer_id,),
-            ).fetchone()
-        initial_ready = initial_job is None or str(initial_job[0]) == "succeeded"
+            initial_ready = not initial_job_incomplete(conn, customer.customer_id)
         return {
             "customer_id": customer.customer_id,
             "identity_linked": profile.telegram_user_id is not None,

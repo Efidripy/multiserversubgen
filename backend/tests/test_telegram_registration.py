@@ -3479,3 +3479,24 @@ def test_admin_node_errors_are_explained_and_logged(tmp_path, monkeypatch, caplo
     assert "Сверку записей" in second.text
     assert "active operation" in caplog.text and "confirmed remote target" in caplog.text
     assert "admin:cn" in caplog.text and "100000001" not in caplog.text
+
+
+def test_admin_customer_repair_button_reports_fixed_and_remaining(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = _approved_telegram_customer(registry, db_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_identities SET remote_snapshot_ready = 0")
+        conn.execute("INSERT INTO nodes (id, name) VALUES (1, 'node-one'), (2, 'node-two')")
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 1, 'setup_user', 'bot_provisioned', 'confirmed', 1),
+                   (?, 2, 'setup_user', 'bot_provisioned', 'missing', 1)""", (customer_id, customer_id))
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    card = service.handle_update(_admin_callback(900, f"admin:customer:{customer_id}:0"))[0]
+    button = next(button for row in card.reply_markup["inline_keyboard"] for button in row if button["text"] == "🔧 Починить")
+    assert len(button["callback_data"].encode()) <= 64
+    result = service.handle_update(_admin_callback(901, button["callback_data"]))[0]
+    assert "Первичная настройка отмечена завершённой" in result.text
+    assert "node-two" in result.text and "запустите сверку" in result.text
