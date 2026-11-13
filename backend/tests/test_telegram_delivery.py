@@ -12,7 +12,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.telegram_delivery import (
     TelegramApiSender,
-    TelegramDeliveryError,
     TelegramMessageEditUnavailableError,
 )
 from services.telegram_registration import TelegramOutboundMessage
@@ -156,8 +155,7 @@ def test_sender_delete_ignores_not_found_and_cant_be_deleted_but_raises_other_er
     assert sender2.send(TelegramOutboundMessage(chat_id=42, text="", delete_message_id=77)) is None
 
     sender3 = TelegramApiSender("test-token", transport=_ErrorTransport("Bad Request: chat not found"))
-    with pytest.raises(TelegramDeliveryError):
-        sender3.send(TelegramOutboundMessage(chat_id=42, text="", delete_message_id=77))
+    assert sender3.send(TelegramOutboundMessage(chat_id=42, text="", delete_message_id=77)) is None
 
 
 class _SequenceTransport:
@@ -247,3 +245,38 @@ def test_sender_uses_file_ids_for_photo_and_album():
     request = transport.requests[-1][0]
     assert request.full_url.endswith("/sendPhoto")
     assert json.loads(request.data)["photo"] == "one"
+
+
+@pytest.mark.parametrize("status", [403, 429])
+def test_interactive_failure_does_not_interrupt_update(status, caplog):
+    from services.telegram_polling import TelegramPollingWorker
+
+    class FailingTransport:
+        def open(self, request, *, timeout):
+            body = json.dumps({"parameters": {"retry_after": 17}}).encode()
+            raise HTTPError(request.full_url, status, "error", {}, io.BytesIO(body))
+
+    class Api:
+        def delete_webhook(self):
+            pass
+
+        def get_updates(self, *, offset, timeout_sec):
+            return [{"update_id": 1, "message": {}}]
+
+    actions = []
+    sender = TelegramApiSender("secret", transport=FailingTransport())
+    worker = TelegramPollingWorker(
+        api=Api(), sender=sender, timeout_sec=1,
+        handle_update=lambda update: actions.append(update["update_id"]) or [
+            TelegramOutboundMessage(987654321, "reply", edit_message_id=1)
+        ],
+    )
+    with caplog.at_level("WARNING", logger="sub_manager"):
+        worker.run_once()
+    worker.close()
+    assert actions == [1]
+    assert len(caplog.records) == 1
+    assert "987654321" not in caplog.text
+    assert str(status) in caplog.text
+    if status == 429:
+        assert "retry_after=17" in caplog.text

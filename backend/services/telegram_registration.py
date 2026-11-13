@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 def _admin_error_message(exc: Exception) -> str:
     reason = str(exc).lower()
     if isinstance(exc, VersionConflictError):
-        return "Данные устарели. Откройте карточку заново."
+        return "Карточка устарела, откройте заново."
     if isinstance(exc, NodePolicyUnavailableError):
         return "Нода не подключена к боту или недоступна."
     if "active operation" in reason or "in-flight remote operation" in reason or "already being added" in reason:
@@ -284,7 +284,7 @@ class TelegramRegistrationService:
         ]
         buttons: list[list[dict[str, str]]] = [[{
             "text": "Выключить доступность в TG" if enabled else "Включить доступность в TG",
-            "callback_data": f"admin:node-toggle:{node_id}:{page}",
+            "callback_data": f"admin:node-toggle:{node_id}:{policy.policy_version if policy else 0}:{page}",
         }]]
         if enabled:
             try:
@@ -527,7 +527,7 @@ class TelegramRegistrationService:
             if action:
                 buttons.append([{
                     "text": f"{state_label} {label}",
-                    "callback_data": f"admin:cn:{customer.customer_id}:{item.node_id}:{action}:{page}",
+                    "callback_data": f"admin:cn:{customer.customer_id}:{item.node_id}:{action}:{customer.row_version}:{page}",
                 }])
         if not matrix:
             lines.append("— пока нет назначенных или доступных TG-нод")
@@ -1079,7 +1079,7 @@ class TelegramRegistrationService:
                 result = self._registry.reschedule_provisioning_job(
                     job_id=job_id,
                     expected_job_version=version,
-                    idempotency_key=f"telegram-admin-issue-{action}:{update_id}:{job_id}",
+                    idempotency_key=f"telegram-admin-issue-{action}:{version}:{job_id}",
                     requested_by=f"telegram:{user_id}",
                     action=action,
                 )
@@ -1105,7 +1105,7 @@ class TelegramRegistrationService:
                 self._registry.set_service_notice(
                     body=None,
                     expected_row_version=version,
-                    idempotency_key=f"telegram-admin-notice-disable:{update_id}",
+                    idempotency_key=f"telegram-admin-notice-disable:{version}",
                     updated_by=f"telegram:{user_id}",
                 )
                 return [self._admin_service_notice_message(chat_id)]
@@ -1315,10 +1315,14 @@ class TelegramRegistrationService:
                 node_id, page = int(parts[2]), int(parts[3])
                 self._registry.clear_node_bulk_action_preview(user_id)
                 return [self._admin_node_message(chat_id, node_id, page)]
-            if len(parts) == 4 and parts[:2] == ["admin", "node-toggle"]:
-                node_id, page = int(parts[2]), int(parts[3])
+            if len(parts) in (4, 5) and parts[:2] == ["admin", "node-toggle"]:
+                if len(parts) != 5:
+                    raise VersionConflictError("node card has no version")
+                node_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
                 policies = {policy.node_id: policy for policy in self._registry.list_node_provisioning_policies()}
                 current = policies.get(node_id)
+                if (current.policy_version if current else 0) != version:
+                    raise VersionConflictError("node card is stale")
                 enabled = not bool(current and current.provisioning_enabled)
                 compatible = False
                 if enabled:
@@ -1500,15 +1504,15 @@ class TelegramRegistrationService:
                 )]
             if len(parts) == 5 and parts[:2] == ["admin", "reject"]:
                 target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
-                self._registry.reject_application(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-reject:{update_id}:{target_user_id}", rejected_by=f"telegram:{user_id}")
+                self._registry.reject_application(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-reject:{version}:{target_user_id}", rejected_by=f"telegram:{user_id}")
                 return [TelegramOutboundMessage(chat_id, "Заявка отклонена.", self._admin_requests_message(chat_id, page).reply_markup)]
             if len(parts) == 5 and parts[:2] == ["admin", "block"]:
                 target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
-                self._registry.block_identity(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-block:{update_id}:{target_user_id}", blocked_by=f"telegram:{user_id}")
+                self._registry.block_identity(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-block:{version}:{target_user_id}", blocked_by=f"telegram:{user_id}")
                 return [TelegramOutboundMessage(chat_id, "Заявка заблокирована.", self._admin_requests_message(chat_id, page).reply_markup)]
             if len(parts) == 5 and parts[:2] == ["admin", "unblock"]:
                 target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
-                self._registry.unblock_identity(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-unblock:{update_id}:{target_user_id}", unblocked_by=f"telegram:{user_id}")
+                self._registry.unblock_identity(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-unblock:{version}:{target_user_id}", unblocked_by=f"telegram:{user_id}")
                 return [TelegramOutboundMessage(chat_id, "Заявка разблокирована. Доступ автоматически не выдан.", self._admin_blocked_message(chat_id, page).reply_markup)]
             if len(parts) == 5 and parts[:2] == ["admin", "customer-delete"]:
                 customer_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
@@ -1541,23 +1545,31 @@ class TelegramRegistrationService:
                 preview = self._registry.preview_customer_operation(customer_id=customer_id, operation_type=operation)
                 if preview.expected_customer_version != version:
                     raise VersionConflictError("customer is stale")
-                self._registry.queue_customer_operation(customer_id=customer_id, operation_type=operation, expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key=f"telegram-admin-customer-{operation}:{update_id}:{customer_id}", created_by=f"telegram:{user_id}")
+                self._registry.queue_customer_operation(customer_id=customer_id, operation_type=operation, expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key=f"telegram-admin-customer-{operation}:{version}:{customer_id}", created_by=f"telegram:{user_id}")
                 verb = "Приостановка" if operation == "suspend" else "Возобновление"
                 return [TelegramOutboundMessage(chat_id, f"{verb} поставлена в очередь.", self._admin_customers_message(chat_id, page).reply_markup)]
-            if len(parts) == 6 and parts[:2] == ["admin", "cn"]:
-                customer_id, node_id, action, page = int(parts[2]), int(parts[3]), parts[4], int(parts[5])
+            if len(parts) in (6, 7) and parts[:2] == ["admin", "cn"]:
+                if len(parts) != 7:
+                    raise VersionConflictError("customer card has no version")
+                customer_id, node_id, action, version, page = int(parts[2]), int(parts[3]), parts[4], int(parts[5]), int(parts[6])
                 customer = self._registry.get_customer(customer_id)
+                if customer.row_version != version:
+                    raise VersionConflictError("customer is stale")
                 if action == "add":
-                    self._registry.queue_customer_node_add(customer_id=customer_id, node_id=node_id, expected_customer_version=customer.row_version, idempotency_key=f"telegram-admin-node-add:{update_id}:{customer_id}:{node_id}", created_by=f"telegram:{user_id}")
+                    self._registry.queue_customer_node_add(customer_id=customer_id, node_id=node_id, expected_customer_version=customer.row_version, idempotency_key=f"telegram-admin-node-add:{version}:{customer_id}:{node_id}", created_by=f"telegram:{user_id}")
                     return [TelegramOutboundMessage(chat_id, "Добавление на ноду поставлено в очередь.", self._admin_customer_message(chat_id, customer_id, page).reply_markup)]
                 operation = f"{action}_node"
                 preview = self._registry.preview_customer_node_operation(customer_id=customer_id, node_id=node_id, operation_type=operation)
-                return [TelegramOutboundMessage(chat_id, f"Подтвердить действие на ноде {preview.targets[0].node_name}?", {"inline_keyboard": [[{"text": "✓ Подтвердить", "callback_data": f"admin:cn-confirm:{customer_id}:{node_id}:{action}:{page}"}], [{"text": "Отмена", "callback_data": f"admin:customer:{customer_id}:{page}"}]]})]
-            if len(parts) == 6 and parts[:2] == ["admin", "cn-confirm"]:
-                customer_id, node_id, action, page = int(parts[2]), int(parts[3]), parts[4], int(parts[5])
+                return [TelegramOutboundMessage(chat_id, f"Подтвердить действие на ноде {preview.targets[0].node_name}?", {"inline_keyboard": [[{"text": "✓ Подтвердить", "callback_data": f"admin:cn-confirm:{customer_id}:{node_id}:{action}:{version}:{page}"}], [{"text": "Отмена", "callback_data": f"admin:customer:{customer_id}:{page}"}]]})]
+            if len(parts) in (6, 7) and parts[:2] == ["admin", "cn-confirm"]:
+                if len(parts) != 7:
+                    raise VersionConflictError("customer card has no version")
+                customer_id, node_id, action, version, page = int(parts[2]), int(parts[3]), parts[4], int(parts[5]), int(parts[6])
+                if self._registry.get_customer(customer_id).row_version != version:
+                    raise VersionConflictError("customer is stale")
                 operation = f"{action}_node"
                 preview = self._registry.preview_customer_node_operation(customer_id=customer_id, node_id=node_id, operation_type=operation)
-                self._registry.queue_customer_node_operation(customer_id=customer_id, node_id=node_id, operation_type=operation, expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key=f"telegram-admin-node-{action}:{update_id}:{customer_id}:{node_id}", created_by=f"telegram:{user_id}")
+                self._registry.queue_customer_node_operation(customer_id=customer_id, node_id=node_id, operation_type=operation, expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key=f"telegram-admin-node-{action}:{version}:{customer_id}:{node_id}", created_by=f"telegram:{user_id}")
                 return [TelegramOutboundMessage(chat_id, "Операция на ноде поставлена в очередь.", self._admin_customer_message(chat_id, customer_id, page).reply_markup)]
         except (ValueError, LifecycleUnavailableError, NodePolicyUnavailableError, VersionConflictError, IdempotencyConflictError, TelegramRegistryError) as exc:
             logger.warning("Admin callback %s: %s", ":".join(parts[:2]), str(exc).replace("\n", " ").replace("\r", " "))

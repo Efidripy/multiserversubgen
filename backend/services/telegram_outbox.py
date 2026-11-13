@@ -34,6 +34,12 @@ class OutboxSuppressed(RuntimeError):
     """The recipient has intentionally disabled this non-interactive notification."""
 
 
+class OutboxRateLimited(RuntimeError):
+    def __init__(self, retry_after: int):
+        super().__init__("telegram_rate_limited")
+        self.retry_after = retry_after
+
+
 class TelegramApiOutboxPort:
     """Small runtime-only Bot API transport; endpoint is never logged."""
 
@@ -70,6 +76,14 @@ class TelegramApiOutboxPort:
             # 401, 429 and 5xx are bot-wide or temporary; proxy failures arrive as URLError.
             if exc.code in {400, 403}:
                 raise OutboxPermanentError(f"telegram_rejected_{exc.code}") from exc
+            if exc.code == 429:
+                try:
+                    body = json.loads(exc.read().decode("utf-8"))
+                    delay = body["parameters"]["retry_after"]
+                    if isinstance(delay, int) and not isinstance(delay, bool) and 0 < delay <= 86400:
+                        raise OutboxRateLimited(delay) from exc
+                except (ValueError, TypeError, KeyError, AttributeError, OSError):
+                    pass
             raise RuntimeError("Telegram delivery failed") from exc
         except (URLError, OSError, RuntimeError, TelegramTransportError) as exc:
             raise RuntimeError("Telegram delivery failed") from exc
@@ -145,6 +159,9 @@ class TelegramOutboxWorker:
         except OutboxPermanentError as exc:
             self._dead_letter(claimed, str(exc))
             return OutboxRunResult(True, claimed.event_id, "dead_letter")
+        except OutboxRateLimited as exc:
+            self._retry_or_dead_letter(claimed, "telegram_rate_limited", retry_after=exc.retry_after)
+            return OutboxRunResult(True, claimed.event_id, "dead_letter" if claimed.attempt_count >= 20 else "retry")
         except Exception:
             self._retry_or_dead_letter(claimed, "delivery_uncertain")
             return OutboxRunResult(True, claimed.event_id, "retry")
@@ -572,11 +589,13 @@ class TelegramOutboxWorker:
                 (claimed.event_id, self._worker_id),
             )
 
-    def _retry_or_dead_letter(self, claimed: ClaimedOutboxEvent, error_code: str) -> None:
-        if claimed.attempt_count >= self._max_attempts:
+    def _retry_or_dead_letter(self, claimed: ClaimedOutboxEvent, error_code: str, *, retry_after: int | None = None) -> None:
+        if claimed.attempt_count >= (20 if retry_after is not None else self._max_attempts):
             self._dead_letter(claimed, error_code)
             return
         delay_seconds = min(900, 2 ** min(claimed.attempt_count, 9)) + secrets.randbelow(1000) / 1000
+        if retry_after is not None:
+            delay_seconds = max(delay_seconds, retry_after)
         next_attempt = _timestamp(self._now() + timedelta(seconds=delay_seconds))
         with connect(self._db_path) as conn:
             conn.execute(

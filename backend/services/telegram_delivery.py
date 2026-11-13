@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -10,6 +11,9 @@ from urllib.request import Request as UrlRequest
 
 from services.telegram_registration import TelegramOutboundMessage
 from services.telegram_transport import TelegramApiTransport, TelegramTransportError
+
+
+logger = logging.getLogger("sub_manager")
 
 
 class TelegramDeliveryError(RuntimeError):
@@ -66,6 +70,15 @@ class TelegramApiSender:
         return f"https://api.telegram.org/bot{self._token_provider()}"
 
     def send(self, message: TelegramOutboundMessage) -> int | None:
+        try:
+            return self._send(message)
+        except TelegramMessageEditUnavailableError:
+            raise
+        except Exception:
+            logger.warning("Telegram interactive delivery failed")
+            return None
+
+    def _send(self, message: TelegramOutboundMessage) -> int | None:
         if message.delete_message_id is not None:
             return self._delete_message(message)
         if message.edit_message_id is not None:
@@ -122,7 +135,10 @@ class TelegramApiSender:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        self._send_request(request)
+        try:
+            self._send_request(request)
+        except Exception:
+            logger.warning("Telegram interactive delivery failed")
 
     def _edit_message(self, message: TelegramOutboundMessage) -> int:
         payload: dict[str, Any] = {
@@ -195,6 +211,19 @@ class TelegramApiSender:
                     raise TelegramDeliveryError("Telegram delivery was rejected")
                 body = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
+            if exc.code in (403, 429):
+                if exc.code == 403:
+                    logger.warning("Telegram interactive delivery forbidden (403)")
+                else:
+                    try:
+                        data = json.loads(exc.read().decode("utf-8"))
+                        delay = data.get("parameters", {}).get("retry_after")
+                        if isinstance(delay, bool) or not isinstance(delay, int) or delay < 0:
+                            delay = None
+                    except (OSError, ValueError, AttributeError):
+                        delay = None
+                    logger.warning("Telegram interactive delivery rate limited (429), retry_after=%s", delay)
+                return None
             description = self._error_description(exc)
             if delete_error_description is not None:
                 delete_error_description.append(description)
