@@ -519,13 +519,15 @@ def build_nodes_router(
                         update_values.append(new_user)
 
                 update_values.append(node_id)
+                # History lives in the attached metrics database: write it first, the same
+                # lock order as the other cross-database writers.
+                if has_name:
+                    conn.execute("UPDATE node_history SET node_name = ? WHERE node_id = ?", (new_name, node_id))
                 result = conn.execute(
                     update_by_id_query("nodes", update_fields),
                     tuple(update_values),
                 )
 
-                if has_name:
-                    conn.execute("UPDATE node_history SET node_name = ? WHERE node_id = ?", (new_name, node_id))
                 conn.commit()
                 if result.rowcount == 0:
                     raise HTTPException(status_code=404, detail="Node not found")
@@ -581,6 +583,8 @@ def build_nodes_router(
                 if exists is None:
                     raise HTTPException(status_code=404, detail="Node not found")
 
+                # History lives in the attached metrics database: lock it first (consistent lock order).
+                conn.execute("DELETE FROM node_history WHERE node_id = ?", (node_id,))
                 # Control-plane deletion only: never call XUI and never delete
                 # remote clients. Remove local dependent lifecycle records in
                 # FK-safe order, regardless of prior Telegram assignments.
@@ -632,7 +636,6 @@ def build_nodes_router(
                     "WHERE telegram_customer_operation_attempts.operation_id = telegram_customer_operations.id)"
                 )
                 conn.execute("DELETE FROM client_notes WHERE node_id = ?", (node_id,))
-                conn.execute("DELETE FROM node_history WHERE node_id = ?", (node_id,))
                 conn.execute("DELETE FROM node_snapshots WHERE node_id = ?", (node_id,))
                 conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
                 conn.commit()

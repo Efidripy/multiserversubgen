@@ -32,6 +32,7 @@ def test_retry_replaces_stale_metrics(tmp_path):
     _seed(admin)
     init_metrics_db(str(metrics))
     with connect(str(metrics)) as conn:
+        conn.execute("CREATE TABLE metrics_migration_staging (x INTEGER)")
         conn.execute("INSERT INTO node_history VALUES(1,2,1,'different',1,1,0,0,0,0)")
     migrate_metrics_db(str(admin), str(metrics), batch_size=1)
     with connect(str(metrics)) as conn:
@@ -110,3 +111,16 @@ def test_interrupted_batch_copy_preserves_admin(tmp_path, monkeypatch):
     with connect(str(admin)) as conn:
         assert conn.execute("SELECT * FROM node_history_migrated").fetchall() == expected
         assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='node_history'").fetchone()
+
+
+def test_migration_refuses_to_wipe_an_active_metrics_store(tmp_path):
+    import pytest
+    admin, metrics = tmp_path / "admin.db", tmp_path / "metrics.db"
+    _seed(admin)
+    init_metrics_db(str(metrics))
+    with connect(str(metrics)) as conn:
+        conn.execute("INSERT INTO node_history VALUES(1,2,1,'active',1,1,0,0,0,0)")
+    with pytest.raises(RuntimeError):
+        migrate_metrics_db(str(admin), str(metrics))
+    with connect(str(metrics)) as conn:
+        assert conn.execute("SELECT node_name FROM node_history").fetchall() == [("active",)]

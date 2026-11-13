@@ -1798,6 +1798,7 @@ def initialize_databases(db_path: str, metrics_db_path: str, enabled: bool, logg
             configure_metrics_attach(metrics_db_path, db_path)
         except Exception:
             logger.warning("Metrics database migration failed; split is disabled")
+            worker_health.set_operator_note("metrics_db_disabled", "Metrics migration did not complete; local history stays in admin.db. See the log, reconcile and restart.")
         return
     valid = False
     if os.path.abspath(db_path) != os.path.abspath(metrics_db_path):
@@ -1838,6 +1839,15 @@ def migrate_metrics_db(db_path: str, metrics_db_path: str, batch_size: int = 500
         if any(name + "_migrated" in existing for name in tables):
             raise RuntimeError("both legacy and migrated metrics tables exist")
         with connect_metrics(metrics_db_path) as target:
+            staging = target.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'metrics_migration_staging'"
+            ).fetchone()
+            if not staging:
+                # No staging marker: this file is an active history store, never wipe it.
+                for name in tables:
+                    if target.execute(f'SELECT 1 FROM "{name}" LIMIT 1').fetchone():
+                        raise RuntimeError("metrics database already holds data; reconcile instead of migrating")
+                target.execute("CREATE TABLE metrics_migration_staging (x INTEGER)")
             for name in tables:
                 target.execute(f'DELETE FROM "{name}"')
         for name in tables:
@@ -1863,3 +1873,5 @@ def migrate_metrics_db(db_path: str, metrics_db_path: str, batch_size: int = 500
                 raise RuntimeError(f"metrics verification failed for {name}")
         for name in tables:
             source.execute(f'ALTER TABLE main."{name}" RENAME TO "{name}_migrated"')
+    with connect_metrics(metrics_db_path) as target:
+        target.execute("DROP TABLE IF EXISTS metrics_migration_staging")
