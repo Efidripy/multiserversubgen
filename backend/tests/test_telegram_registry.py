@@ -1974,3 +1974,84 @@ def test_repair_customer_reports_missing_binding_and_operation(tmp_path):
     assert result["fixed"] == ["remote_snapshot_ready"]
     assert {"code": "binding_missing", "node_name": "node-two"} in result["problems"]
     assert {"code": "unfinished_operation", "operation_id": operation.operation_id, "node_name": "node-one"} in result["problems"]
+
+
+def _snapshot(conn, node_id, uuids):
+    import json as _json
+    clients = [{"email": f"u{i}", "uuid": u} for i, u in enumerate(uuids)]
+    conn.execute(
+        "INSERT OR REPLACE INTO node_snapshots (node_id, status_data, is_online, updated_at) VALUES (?, ?, 1, CURRENT_TIMESTAMP)",
+        (node_id, _json.dumps({"clients": clients})),
+    )
+
+
+def test_repair_does_not_confirm_binding_itself_when_client_is_back_on_the_panel(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'rc-1', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+        _snapshot(conn, 2, ["rc-1"])
+    result = registry.repair_customer(customer_id, "admin")
+    assert {"code": "binding_present", "node_name": "node-two"} in result["notes"]
+    assert not any(p["code"] == "binding_missing" for p in result["problems"])
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state FROM customer_node_bindings WHERE node_id = 2").fetchone() == ("missing",)
+
+
+def test_repair_reports_really_absent_client_as_a_note_not_a_problem(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'rc-gone', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+        _snapshot(conn, 2, ["someone-else"])
+    result = registry.repair_customer(customer_id, "admin")
+    assert {"code": "binding_absent", "node_name": "node-two"} in result["notes"]
+    assert not any(p["code"] == "binding_missing" for p in result["problems"])
+
+
+def test_repair_recognises_client_id_field_of_inbound_settings_snapshots(tmp_path):
+    import json as _json
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'rc-1', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+        conn.execute(
+            "INSERT OR REPLACE INTO node_snapshots (node_id, status_data, is_online, updated_at) VALUES (2, ?, 1, CURRENT_TIMESTAMP)",
+            (_json.dumps({"inbounds": [{"settings": {"clients": [{"id": "RC-1", "email": "repair-user"}]}}]}),),
+        )
+    assert {"code": "binding_present", "node_name": "node-two"} in registry.repair_customer(customer_id, "admin")["notes"]
+
+
+def test_forget_missing_bindings_removes_only_missing_and_keeps_busy(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'rc-gone', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+        confirmed_before = conn.execute(
+            "SELECT COUNT(*) FROM customer_node_bindings WHERE customer_id = ? AND management_state = 'confirmed'",
+            (customer_id,),
+        ).fetchone()[0]
+    result = registry.forget_missing_bindings(customer_id, "admin")
+    assert result == {"forgotten": ["node-two"], "busy": []}
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE management_state = 'missing'").fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM customer_node_bindings WHERE customer_id = ? AND management_state = 'confirmed'", (customer_id,)
+        ).fetchone()[0] == confirmed_before
+    assert registry.forget_missing_bindings(customer_id, "admin") == {"forgotten": [], "busy": []}
+
+
+def test_repair_treats_missing_binding_on_disabled_node_as_note(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'rc-gone', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+        conn.execute("UPDATE nodes SET enabled = 0 WHERE id = 2")
+    result = registry.repair_customer(customer_id, "admin")
+    assert {"code": "binding_absent", "node_name": "node-two"} in result["notes"]
+    assert not any(p["code"] == "binding_missing" for p in result["problems"])

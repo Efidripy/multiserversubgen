@@ -1263,25 +1263,51 @@ class TelegramRegistrationService:
             if len(parts) == 4 and parts[:2] == ["admin", "customer-repair"]:
                 customer_id, page = int(parts[2]), int(parts[3])
                 result = self._registry.repair_customer(customer_id, str(user_id))
-                lines = ["Первичная настройка отмечена завершённой" if result["fixed"] else "Чинить нечего"]
+                lines = ["Первичная настройка отмечена завершённой" if result["fixed"] else (
+                    "Нужно внимание" if result["problems"] else "Чинить нечего")]
+                for note in result.get("notes", []):
+                    node = note.get("node_name") or "неизвестной ноде"
+                    if note.get("code") == "binding_present":
+                        lines.append(f"На ноде {node} клиент снова виден на панели — статус обновит ближайшая автоматическая сверка.")
+                    else:
+                        lines.append(
+                            f"На ноде {node} клиента нет на панели (по свежим данным ноды) — это не ошибка. "
+                            "Нужен там — добавьте на ноду, не нужен — нажмите «Забыть»."
+                        )
                 for problem in result["problems"]:
                     code = problem["code"]
                     node = problem.get("node_name") or "неизвестной ноде"
                     messages = {
-                        "binding_missing": f"На ноде {node} клиента нет на панели — добавьте его заново или запустите сверку.",
-                        "binding_conflict": f"На ноде {node} конфликт данных — проверьте клиента и запустите сверку.",
+                        "binding_missing": f"На ноде {node} клиента нет на панели, свежих данных ноды для проверки нет — повторите позже или добавьте клиента на ноду.",
+                        "binding_conflict": f"На ноде {node} конфликт данных — проверьте клиента на панели.",
                         "unfinished_operation": f"На ноде {node} идёт операция #{problem.get('operation_id')} — дождитесь или закройте её в админке.",
                         "unfinished_job": f"Задание #{problem.get('job_id')} не завершено — дождитесь его или проверьте в админке.",
                         "initial_job_incomplete": "Первичное задание не завершено — проверьте его в админке.",
                         "unfinished_discovery": "Сверка не завершена — проверьте её в админке.",
-                        "no_confirmed_binding": "Нет подтверждённых привязок — добавьте клиента на ноду или запустите сверку.",
+                        "no_confirmed_binding": "Нет подтверждённых привязок — добавьте клиента на ноду.",
                         "identity_not_approved": "Заявка не одобрена — проверьте её в админке.",
                         "customer_inactive": "Клиент не активен — проверьте его статус в админке.",
                         "snapshot_incomplete": "Первичная настройка не завершена — устраните указанные проблемы.",
                     }
                     lines.append(messages.get(code, "Проверьте состояние клиента в админке."))
+                markup = self._admin_customer_message(chat_id, customer_id, page).reply_markup
+                if any(n.get("code") == "binding_absent" for n in result.get("notes", [])) or any(p["code"] == "binding_missing" for p in result["problems"]):
+                    markup = {"inline_keyboard": [[{
+                        "text": "🧹 Забыть «нет на панели»",
+                        "callback_data": f"admin:customer-forget:{customer_id}:{page}",
+                    }]] + list(markup["inline_keyboard"])}
+                return [TelegramOutboundMessage(chat_id, "\n".join(lines), markup)]
+            if len(parts) == 4 and parts[:2] == ["admin", "customer-forget"]:
+                customer_id, page = int(parts[2]), int(parts[3])
+                result = self._registry.forget_missing_bindings(customer_id, str(user_id))
+                if result["forgotten"]:
+                    text = "Убрал записи «нет на панели»: " + ", ".join(result["forgotten"]) + "."
+                else:
+                    text = "Записей «нет на панели» нет."
+                if result["busy"]:
+                    text += " Не тронул (есть незавершённая операция): " + ", ".join(result["busy"]) + "."
                 return [TelegramOutboundMessage(
-                    chat_id, "\n".join(lines), self._admin_customer_message(chat_id, customer_id, page).reply_markup,
+                    chat_id, text, self._admin_customer_message(chat_id, customer_id, page).reply_markup,
                 )]
             if len(parts) == 4 and parts[:2] == ["admin", "customer-note"]:
                 customer_id, page = int(parts[2]), int(parts[3])
