@@ -81,3 +81,22 @@ def snapshot():
             _update(entry, now)
         return [{key: value for key, value in entry.items() if not key.startswith("_")}
                 for entry in _workers.values()]
+
+
+_operator_notes = {}
+
+
+def set_operator_note(name, text):
+    with _lock:
+        _operator_notes[name] = {"name": name, "text": text, "time": _timestamp(time.time())}
+
+
+def operator_notes():
+    with _lock:
+        return [dict(note) for note in _operator_notes.values()]
+
+
+def clear_metrics_notes():
+    with _lock:
+        for name in ("metrics_db_recovered", "metrics_db_created_empty", "metrics_db_disabled"):
+            _operator_notes.pop(name, None)

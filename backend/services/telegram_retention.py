@@ -8,7 +8,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from services.db_bootstrap import connect
+from services.db_bootstrap import connect, metrics_attach_path
 
 
 @dataclass(frozen=True)
@@ -91,17 +91,26 @@ def checkpoint_database(db_path: str, truncate: bool = True, log_sizes: bool = T
         with connect(db_path) as conn:
             mode = "TRUNCATE" if truncate else "PASSIVE"
             result = conn.execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
+            metrics_path = metrics_attach_path(db_path)
+            metrics_result = (
+                conn.execute(f"PRAGMA metrics.wal_checkpoint({mode})").fetchone()
+                if metrics_path else None
+            )
             def size(path: str) -> int:
                 try:
                     return os.path.getsize(path)
                 except FileNotFoundError:
                     return 0
             db_size, wal_size = size(db_path), size(db_path + "-wal")
+            metrics_wal_size = size(metrics_path + "-wal") if metrics_path else 0
             logger = logging.getLogger("sub_manager")
             if log_sizes:
                 logger.info(
-                    "SQLite size: db=%s bytes wal=%s bytes checkpoint_busy=%s", db_size, wal_size, result[0]
+                    "SQLite size: db=%s bytes wal=%s bytes metrics_wal=%s bytes checkpoint_busy=%s metrics_busy=%s",
+                    db_size, wal_size, metrics_wal_size, result[0], metrics_result[0] if metrics_result else 0,
                 )
             if wal_size > 256 * 1024 * 1024:
                 logger.warning("SQLite WAL exceeds 256 MB: %s bytes", wal_size)
-            return result[0]
+            if metrics_wal_size > 256 * 1024 * 1024:
+                logger.warning("SQLite metrics WAL exceeds 256 MB: %s bytes", metrics_wal_size)
+            return max(result[0], metrics_result[0] if metrics_result else 0)

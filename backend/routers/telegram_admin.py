@@ -124,7 +124,7 @@ def build_telegram_admin_router(
     @router.get("/api/v1/telegram/workers")
     def get_workers(request: Request):
         require_admin(request)
-        return worker_health.snapshot()
+        return {"workers": worker_health.snapshot(), "operator_notes": worker_health.operator_notes()}
 
     @router.get("/api/v1/telegram/bot-configuration")
     def get_bot_configuration(request: Request):

@@ -1,12 +1,33 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 import os
+import shutil
 import sqlite3
 import sys
 import time
+from contextlib import closing
 
+from core import worker_health
 from shared.observability import record_sqlite
+
+_metrics_attach = None
+
+
+def configure_metrics_attach(metrics_db_path: str | None, admin_db_path: str | None = None) -> None:
+    global _metrics_attach
+    _metrics_attach = (
+        (os.path.abspath(admin_db_path or os.path.join(os.path.dirname(metrics_db_path), "admin.db")),
+         os.path.abspath(metrics_db_path))
+        if metrics_db_path is not None else None
+    )
+
+
+def metrics_attach_path(db_path: str) -> str | None:
+    if _metrics_attach and os.path.abspath(db_path) == _metrics_attach[0]:
+        return _metrics_attach[1]
+    return None
 
 
 class _ManagedConnection(sqlite3.Connection):
@@ -99,6 +120,13 @@ def connect(db_path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA wal_autocheckpoint=0")
     conn.execute("PRAGMA journal_size_limit=67108864")
+    metrics_path = metrics_attach_path(db_path)
+    if metrics_path is not None:
+        try:
+            conn.execute("ATTACH DATABASE ? AS metrics", (metrics_path,))
+        except Exception:
+            conn.close()
+            raise
     return conn
 
 
@@ -1463,19 +1491,20 @@ def init_db(db_path: str) -> None:
                       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                       payload TEXT NOT NULL)"""
         )
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS node_history
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      ts INTEGER NOT NULL,
-                      node_id INTEGER NOT NULL,
-                      node_name TEXT NOT NULL,
-                      available INTEGER NOT NULL,
-                      xray_running INTEGER NOT NULL,
-                      cpu REAL NOT NULL,
-                      online_clients INTEGER NOT NULL,
-                      traffic_total REAL NOT NULL,
-                      poll_ms REAL NOT NULL)"""
-        )
+        if metrics_attach_path(db_path) is None:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS node_history
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          ts INTEGER NOT NULL,
+                          node_id INTEGER NOT NULL,
+                          node_name TEXT NOT NULL,
+                          available INTEGER NOT NULL,
+                          xray_running INTEGER NOT NULL,
+                          cpu REAL NOT NULL,
+                          online_clients INTEGER NOT NULL,
+                          traffic_total REAL NOT NULL,
+                          poll_ms REAL NOT NULL)"""
+            )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS node_snapshots
                      (node_id INTEGER PRIMARY KEY,
@@ -1484,35 +1513,36 @@ def init_db(db_path: str) -> None:
                       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                       FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE)"""
         )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_node_history_ts ON node_history(ts)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_node_history_node_ts ON node_history(node_id, ts)")
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS traffic_stats_snapshots
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      group_by TEXT NOT NULL,
-                      bucket_kind TEXT NOT NULL,
-                      bucket_start INTEGER NOT NULL,
-                      snapshot_ts INTEGER NOT NULL,
-                      stats_json TEXT NOT NULL,
-                      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                      UNIQUE(group_by, bucket_kind, bucket_start))"""
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_traffic_stats_snapshots_lookup "
-            "ON traffic_stats_snapshots(group_by, bucket_kind, snapshot_ts)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_traffic_stats_snapshots_bucket "
-            "ON traffic_stats_snapshots(group_by, bucket_kind, bucket_start)"
-        )
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS traffic_samples
-                     (node_id TEXT NOT NULL, ts INTEGER NOT NULL,
-                      tier TEXT NOT NULL CHECK(tier IN ('raw','hour','day')),
-                      inbounds_json TEXT NOT NULL, clients_json TEXT NOT NULL,
-                      PRIMARY KEY(node_id, tier, ts)) WITHOUT ROWID"""
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_traffic_samples_tier_ts ON traffic_samples(tier, ts)")
+        if metrics_attach_path(db_path) is None:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_node_history_ts ON node_history(ts)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_node_history_node_ts ON node_history(node_id, ts)")
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS traffic_stats_snapshots
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          group_by TEXT NOT NULL,
+                          bucket_kind TEXT NOT NULL,
+                          bucket_start INTEGER NOT NULL,
+                          snapshot_ts INTEGER NOT NULL,
+                          stats_json TEXT NOT NULL,
+                          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                          UNIQUE(group_by, bucket_kind, bucket_start))"""
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_traffic_stats_snapshots_lookup "
+                "ON traffic_stats_snapshots(group_by, bucket_kind, snapshot_ts)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_traffic_stats_snapshots_bucket "
+                "ON traffic_stats_snapshots(group_by, bucket_kind, bucket_start)"
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS traffic_samples
+                         (node_id TEXT NOT NULL, ts INTEGER NOT NULL,
+                          tier TEXT NOT NULL CHECK(tier IN ('raw','hour','day')),
+                          inbounds_json TEXT NOT NULL, clients_json TEXT NOT NULL,
+                          PRIMARY KEY(node_id, tier, ts)) WITHOUT ROWID"""
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_traffic_samples_tier_ts ON traffic_samples(tier, ts)")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS adguard_sources
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1530,24 +1560,25 @@ def init_db(db_path: str) -> None:
                       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                       updated_at TEXT DEFAULT CURRENT_TIMESTAMP)"""
         )
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS adguard_history
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      ts INTEGER NOT NULL,
-                      source_id INTEGER NOT NULL,
-                      source_name TEXT NOT NULL,
-                      available INTEGER NOT NULL,
-                      queries_total REAL NOT NULL,
-                      blocked_total REAL NOT NULL,
-                      blocked_rate REAL NOT NULL,
-                      cache_hit_ratio REAL NOT NULL,
-                      avg_latency_ms REAL NOT NULL,
-                      upstream_errors REAL NOT NULL,
-                      extra_json TEXT DEFAULT '',
-                      FOREIGN KEY(source_id) REFERENCES adguard_sources(id) ON DELETE CASCADE)"""
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_adguard_history_ts ON adguard_history(ts)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_adguard_history_source_ts ON adguard_history(source_id, ts)")
+        if metrics_attach_path(db_path) is None:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS adguard_history
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          ts INTEGER NOT NULL,
+                          source_id INTEGER NOT NULL,
+                          source_name TEXT NOT NULL,
+                          available INTEGER NOT NULL,
+                          queries_total REAL NOT NULL,
+                          blocked_total REAL NOT NULL,
+                          blocked_rate REAL NOT NULL,
+                          cache_hit_ratio REAL NOT NULL,
+                          avg_latency_ms REAL NOT NULL,
+                          upstream_errors REAL NOT NULL,
+                          extra_json TEXT DEFAULT '',
+                          FOREIGN KEY(source_id) REFERENCES adguard_sources(id) ON DELETE CASCADE)"""
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_adguard_history_ts ON adguard_history(ts)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_adguard_history_source_ts ON adguard_history(source_id, ts)")
         conn.commit()
 
 
@@ -1572,3 +1603,275 @@ def sync_node_history_names_with_nodes(db_path: str, logger: logging.Logger) -> 
         conn.commit()
     if result.rowcount:
         logger.info(f"node_history names synchronized: {result.rowcount} rows updated")
+
+# Metrics storage is prepared separately so schema creation never modifies admin.db.
+_METRICS_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS node_history
+       (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, node_id INTEGER NOT NULL,
+        node_name TEXT NOT NULL, available INTEGER NOT NULL, xray_running INTEGER NOT NULL,
+        cpu REAL NOT NULL, online_clients INTEGER NOT NULL, traffic_total REAL NOT NULL,
+        poll_ms REAL NOT NULL)""",
+    "CREATE INDEX IF NOT EXISTS idx_node_history_ts ON node_history(ts)",
+    "CREATE INDEX IF NOT EXISTS idx_node_history_node_ts ON node_history(node_id, ts)",
+    """CREATE TABLE IF NOT EXISTS adguard_history
+       (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, source_id INTEGER NOT NULL,
+        source_name TEXT NOT NULL, available INTEGER NOT NULL, queries_total REAL NOT NULL,
+        blocked_total REAL NOT NULL, blocked_rate REAL NOT NULL, cache_hit_ratio REAL NOT NULL,
+        avg_latency_ms REAL NOT NULL, upstream_errors REAL NOT NULL, extra_json TEXT DEFAULT '')""",
+    "CREATE INDEX IF NOT EXISTS idx_adguard_history_ts ON adguard_history(ts)",
+    "CREATE INDEX IF NOT EXISTS idx_adguard_history_source_ts ON adguard_history(source_id, ts)",
+    """CREATE TABLE IF NOT EXISTS traffic_samples
+       (node_id TEXT NOT NULL, ts INTEGER NOT NULL,
+        tier TEXT NOT NULL CHECK(tier IN ('raw','hour','day')), inbounds_json TEXT NOT NULL,
+        clients_json TEXT NOT NULL, PRIMARY KEY(node_id, tier, ts)) WITHOUT ROWID""",
+    "CREATE INDEX IF NOT EXISTS idx_traffic_samples_tier_ts ON traffic_samples(tier, ts)",
+    """CREATE TABLE IF NOT EXISTS traffic_stats_snapshots
+       (id INTEGER PRIMARY KEY AUTOINCREMENT, group_by TEXT NOT NULL, bucket_kind TEXT NOT NULL,
+        bucket_start INTEGER NOT NULL, snapshot_ts INTEGER NOT NULL, stats_json TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(group_by, bucket_kind, bucket_start))""",
+    "CREATE INDEX IF NOT EXISTS idx_traffic_stats_snapshots_lookup ON traffic_stats_snapshots(group_by, bucket_kind, snapshot_ts)",
+    "CREATE INDEX IF NOT EXISTS idx_traffic_stats_snapshots_bucket ON traffic_stats_snapshots(group_by, bucket_kind, bucket_start)",
+)
+_METRICS_TABLES = ("node_history", "adguard_history", "traffic_samples", "traffic_stats_snapshots")
+
+
+def connect_metrics(metrics_db_path: str) -> sqlite3.Connection:
+    return connect(metrics_db_path)
+
+
+def init_metrics_db(metrics_db_path: str) -> None:
+    with connect_metrics(metrics_db_path) as conn:
+        for statement in _METRICS_SCHEMA:
+            conn.execute(statement)
+
+
+def _metrics_count(conn: sqlite3.Connection) -> int:
+    """Validate the database and the columns and keys required by the application."""
+    if conn.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+        raise ValueError("metrics integrity check failed")
+    with closing(sqlite3.connect(":memory:")) as expected:
+        for statement in _METRICS_SCHEMA:
+            expected.execute(statement)
+        total = 0
+        for name in _METRICS_TABLES:
+            actual_columns = conn.execute(f'PRAGMA table_info("{name}")').fetchall()
+            expected_columns = expected.execute(f'PRAGMA table_info("{name}")').fetchall()
+            if actual_columns != expected_columns:
+                raise ValueError("incompatible metrics schema")
+            def unique_keys(db):
+                indexes = db.execute(f'PRAGMA index_list("{name}")').fetchall()
+                return sorted(tuple(row[2] for row in db.execute(f'PRAGMA index_info("{idx[1]}")'))
+                              for idx in indexes if idx[2])
+            if unique_keys(conn) != unique_keys(expected):
+                raise ValueError("incompatible metrics keys")
+            if name == "traffic_samples":
+                sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()[0]
+                normalized = "".join(sql.lower().split()).replace('"', '').replace("`", "")
+                if "check(tierin('raw','hour','day'))" not in normalized or "withoutrowid" not in normalized:
+                    raise ValueError("incompatible metrics constraints")
+            total += conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+        return total
+
+
+def _read_metrics(path: str) -> int:
+    uri = Path(path).resolve().as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(uri, uri=True)) as conn:
+        return _metrics_count(conn)
+
+
+def _backup_metrics(source: sqlite3.Connection, path: str) -> None:
+    expected_count = _metrics_count(source)
+    stamp = f"{time.time_ns()}-{os.getpid()}"
+    temporary = f"{path}.restore-{stamp}"
+    try:
+        with closing(sqlite3.connect(temporary)) as target:
+            source.backup(target)
+        if _read_metrics(temporary) != expected_count:
+            raise ValueError("metrics recovery count mismatch")
+        if os.path.exists(path):
+            shutil.copy2(path, f"{path}.corrupt-{stamp}")
+        for suffix in ("-wal", "-shm"):
+            sidecar = path + suffix
+            if os.path.exists(sidecar):
+                os.replace(sidecar, f"{path}.corrupt-{stamp}{suffix}")
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _recover_metrics(db_path: str, metrics_path: str, names: set[str], logger: logging.Logger,
+                     auto_create: bool) -> bool:
+    candidates = []
+    directories = {Path(db_path).resolve().parent, Path(metrics_path).resolve().parent}
+    directories |= {directory / "backups" for directory in directories}
+    for directory in directories:
+        for pattern in ("metrics*.db", "metrics*.db.bak", "metrics*.db.backup"):
+            for path in directory.glob(pattern):
+                if path.resolve() in (Path(metrics_path).resolve(), Path(db_path).resolve()) or not path.is_file():
+                    continue
+                try:
+                    candidates.append((_read_metrics(str(path)), path.stat().st_mtime, str(path)))
+                except (OSError, sqlite3.Error, ValueError):
+                    continue
+    for count, _, candidate in sorted(candidates, reverse=True):
+        try:
+            with closing(sqlite3.connect(Path(candidate).resolve().as_uri() + "?mode=ro", uri=True)) as source:
+                _backup_metrics(source, metrics_path)
+            logger.warning("Metrics database recovered from %s to %s (%d rows)",
+                           os.path.basename(candidate), os.path.basename(metrics_path), count)
+            worker_health.set_operator_note("metrics_db_recovered", "Metrics history recovered from a backup.")
+            return True
+        except (OSError, sqlite3.Error, ValueError):
+            continue
+    migrated = [name for name in _METRICS_TABLES if name + "_migrated" in names]
+    if migrated:
+        try:
+            with closing(sqlite3.connect(db_path)) as source, closing(sqlite3.connect(":memory:")) as target:
+                for statement in _METRICS_SCHEMA:
+                    target.execute(statement)
+                for name in migrated:
+                    columns = [row[1] for row in source.execute(f'PRAGMA table_info("{name}_migrated")')]
+                    quoted = ", ".join('"' + col.replace('"', '""') + '"' for col in columns)
+                    cursor = source.execute(f'SELECT {quoted} FROM "{name}_migrated"')
+                    while rows := cursor.fetchmany(5000):
+                        target.executemany(f'INSERT INTO "{name}" ({quoted}) VALUES ({", ".join("?" for _ in columns)})', rows)
+                    if source.execute(f'SELECT COUNT(*) FROM "{name}_migrated"').fetchone()[0] != target.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]:
+                        raise ValueError("metrics recovery count mismatch")
+                target.commit()
+                _backup_metrics(target, metrics_path)
+            logger.warning("Metrics history recovered from migrated tables")
+            worker_health.set_operator_note("metrics_db_recovered", "Metrics history recovered from migrated tables.")
+            return True
+        except (OSError, sqlite3.Error, ValueError):
+            logger.warning("Metrics history recovery from migrated tables failed; split is disabled")
+            return False
+    if auto_create:
+        try:
+            with closing(sqlite3.connect(":memory:")) as source:
+                for statement in _METRICS_SCHEMA:
+                    source.execute(statement)
+                _backup_metrics(source, metrics_path)
+            logger.warning("metrics history was empty, started with a new database")
+            worker_health.set_operator_note("metrics_db_created_empty", "Metrics history was empty; a new database was created.")
+            return True
+        except (OSError, sqlite3.Error, ValueError):
+            logger.warning("Metrics database creation failed; split is disabled")
+    else:
+        logger.warning("Metrics database disabled; set METRICS_DB_AUTO_CREATE=1 to create it")
+    worker_health.set_operator_note("metrics_db_disabled", "Metrics history is stored locally; set METRICS_DB_AUTO_CREATE=1 to create a metrics database.")
+    return False
+
+
+def initialize_databases(db_path: str, metrics_db_path: str, enabled: bool, logger: logging.Logger,
+                         auto_create: bool = True) -> None:
+    """Initialize the admin schema and enable the split before workers start."""
+    configure_metrics_attach(None)
+    worker_health.clear_metrics_notes()
+    if not enabled:
+        init_db(db_path)
+        return
+    names = set()
+    if os.path.exists(db_path):
+        with sqlite3.connect(db_path) as conn:
+            names = {row[0] for row in conn.execute("SELECT name FROM main.sqlite_master WHERE type='table'")}
+    live_tables = any(name in names for name in _METRICS_TABLES)
+    migrated_tables = any(name + "_migrated" in names for name in _METRICS_TABLES)
+    if live_tables and migrated_tables:
+        logger.warning("Metrics database disabled while local history tables exist")
+        worker_health.set_operator_note("metrics_db_disabled", "Local history tables exist; reconcile them before enabling the metrics database.")
+        init_db(db_path)
+        return
+    if live_tables and not auto_create and not os.path.isfile(metrics_db_path):
+        logger.warning("Metrics database disabled; set METRICS_DB_AUTO_CREATE=1 to create it")
+        worker_health.set_operator_note("metrics_db_disabled", "Set METRICS_DB_AUTO_CREATE=1 to create a metrics database.")
+        init_db(db_path)
+        return
+    # Legacy live tables still need the normal migration path.
+    if live_tables and not any(
+        name + "_migrated" in names for name in _METRICS_TABLES
+    ):
+        init_db(db_path)
+        try:
+            init_metrics_db(metrics_db_path)
+            migrate_metrics_db(db_path, metrics_db_path)
+            configure_metrics_attach(metrics_db_path, db_path)
+        except Exception:
+            logger.warning("Metrics database migration failed; split is disabled")
+            worker_health.set_operator_note("metrics_db_disabled", "Metrics migration did not complete; local history stays in admin.db. See the log, reconcile and restart.")
+        return
+    valid = False
+    if os.path.abspath(db_path) != os.path.abspath(metrics_db_path):
+        try:
+            _read_metrics(metrics_db_path)
+            valid = True
+        except (OSError, sqlite3.Error, ValueError):
+            try:
+                valid = _recover_metrics(db_path, metrics_db_path, names, logger, auto_create)
+            except (OSError, sqlite3.Error, ValueError):
+                logger.warning("Metrics database recovery failed; split is disabled")
+    if valid:
+        configure_metrics_attach(metrics_db_path, db_path)
+        try:
+            init_db(db_path)
+            return
+        except sqlite3.Error:
+            configure_metrics_attach(None)
+            logger.warning("Metrics database attach failed; split is disabled")
+    worker_health.set_operator_note("metrics_db_disabled", "Metrics database unavailable; set METRICS_DB_AUTO_CREATE=1 to create it.")
+    init_db(db_path)
+
+
+def migrate_metrics_db(db_path: str, metrics_db_path: str, batch_size: int = 5000) -> None:
+    """Copy and verify all legacy tables before atomically renaming any of them.
+
+    The caller must ensure there are no active application writers during startup.
+    An exception leaves the legacy tables in place; a retry copies them again.
+    """
+    if os.path.abspath(db_path) == os.path.abspath(metrics_db_path):
+        raise ValueError("metrics database must be separate from admin database")
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    init_metrics_db(metrics_db_path)
+    with connect(db_path) as source:
+        existing = {row[0] for row in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = [name for name in _METRICS_TABLES if name in existing]
+        if any(name + "_migrated" in existing for name in tables):
+            raise RuntimeError("both legacy and migrated metrics tables exist")
+        with connect_metrics(metrics_db_path) as target:
+            staging = target.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'metrics_migration_staging'"
+            ).fetchone()
+            if not staging:
+                # No staging marker: this file is an active history store, never wipe it.
+                for name in tables:
+                    if target.execute(f'SELECT 1 FROM "{name}" LIMIT 1').fetchone():
+                        raise RuntimeError("metrics database already holds data; reconcile instead of migrating")
+                target.execute("CREATE TABLE metrics_migration_staging (x INTEGER)")
+            for name in tables:
+                target.execute(f'DELETE FROM "{name}"')
+        for name in tables:
+            columns = [row[1] for row in source.execute(f'PRAGMA table_info("{name}")')]
+            quoted = ", ".join('"' + col.replace('"', '""') + '"' for col in columns)
+            cursor = source.execute(f'SELECT {quoted} FROM "{name}"')
+            while rows := cursor.fetchmany(batch_size):
+                placeholders = ", ".join("?" for _ in columns)
+                with connect_metrics(metrics_db_path) as target:
+                    target.executemany(f'INSERT OR IGNORE INTO "{name}" ({quoted}) VALUES ({placeholders})', rows)
+        # Lock out legacy writers while comparing all values and renaming together.
+        source.execute("ATTACH DATABASE ? AS metrics", (metrics_db_path,))
+        source.execute("BEGIN IMMEDIATE")
+        for name in tables:
+            columns = [row[1] for row in source.execute(f'PRAGMA main.table_info("{name}")')]
+            quoted = ", ".join('"' + col.replace('"', '""') + '"' for col in columns)
+            count = source.execute(f'SELECT COUNT(*) FROM main."{name}"').fetchone()[0]
+            target_count = source.execute(f'SELECT COUNT(*) FROM metrics."{name}"').fetchone()[0]
+            missing = source.execute(
+                f'SELECT {quoted} FROM main."{name}" EXCEPT SELECT {quoted} FROM metrics."{name}" LIMIT 1'
+            ).fetchone()
+            if count != target_count or missing is not None:
+                raise RuntimeError(f"metrics verification failed for {name}")
+        for name in tables:
+            source.execute(f'ALTER TABLE main."{name}" RENAME TO "{name}_migrated"')
+    with connect_metrics(metrics_db_path) as target:
+        target.execute("DROP TABLE IF EXISTS metrics_migration_staging")

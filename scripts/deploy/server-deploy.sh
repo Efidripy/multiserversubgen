@@ -168,6 +168,7 @@ HAD_PREVIOUS=0
 SERVICE_STOPPED=0
 SWAP_STARTED=0
 STATE_DB="${PROJECT_DIR}/admin.db"
+METRICS_DB="${PROJECT_DIR}/metrics.db"
 
 cleanup_stage() {
   [[ -d "$STAGE_DIR" ]] && rm -rf -- "$STAGE_DIR"
@@ -397,6 +398,11 @@ if [[ "$HAD_PREVIOUS" == "1" ]]; then
   chmod 0600 "$BACKUP_TAR" "$BACKUP_SHA" "$BACKUP_CONTENTS"
   sqlite3 "$STATE_DB" ".backup '$STAGE_DIR/admin.db'"
   [[ "$(sqlite3 "$STAGE_DIR/admin.db" 'PRAGMA integrity_check;' | tr -d '\r')" == "ok" ]] || fail "staged runtime database backup integrity check failed"
+  if [[ -f "$METRICS_DB" ]]; then
+    sqlite3 "$METRICS_DB" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null
+    sqlite3 "$METRICS_DB" ".backup '$STAGE_DIR/metrics.db'"
+    [[ "$(sqlite3 "$STAGE_DIR/metrics.db" 'PRAGMA integrity_check;' | tr -d '')" == "ok" ]] || fail "staged metrics database backup integrity check failed"
+  fi
   if [[ -f "$PROJECT_DIR/.encryption_key" ]]; then
     install -m 0600 "$PROJECT_DIR/.encryption_key" "$STAGE_DIR/.encryption_key"
   fi
