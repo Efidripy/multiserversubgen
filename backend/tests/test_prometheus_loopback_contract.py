@@ -72,6 +72,7 @@ def test_stock_unit_is_bound_through_args_without_a_dropin(tmp_path, defaults, e
     assert not reload_marker.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Git Bash install cannot use Windows drive paths in environment variables")
 def test_override_without_args_gets_a_later_dropin_keeping_its_command(tmp_path):
     _, dropin, reload_marker = _bind(tmp_path, OVERRIDE_UNIT, 'ARGS=""\n')
 
@@ -82,6 +83,7 @@ def test_override_without_args_gets_a_later_dropin_keeping_its_command(tmp_path)
     assert reload_marker.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Git Bash install cannot use Windows drive paths in environment variables")
 def test_override_with_a_public_address_is_rebound_to_loopback(tmp_path):
     public = DEBIAN_UNIT + (
         "ExecStart=\nExecStart=/usr/bin/prometheus --web.listen-address=0.0.0.0:9090 --a=1\n"
@@ -95,6 +97,7 @@ def test_override_with_a_public_address_is_rebound_to_loopback(tmp_path):
     assert reload_marker.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Git Bash install cannot use Windows drive paths in environment variables")
 def test_override_reading_args_loses_its_address_without_repeating_the_flag(tmp_path):
     public = DEBIAN_UNIT + (
         "ExecStart=\nExecStart=/usr/bin/prometheus --web.listen-address=:9090 $ARGS\n"

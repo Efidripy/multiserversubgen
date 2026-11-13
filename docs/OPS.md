@@ -268,3 +268,29 @@ fallback, `/run/log/journal`; отсутствие обоих каталогов
 `traffic_samples` хранит счётчики по нодам: raw — 3 дня, почасовые — до 60 дней, дневные — до 730 дней.
 
 В режиме ultra-idle опрос для `traffic_samples` выполняется не реже раза в 10 минут.
+
+### Deployment checks and SQLite recovery
+
+`deploy.ps1` runs `scripts/deploy/post-check.sh` after the health checks. The
+server-side check can also be run with `bash scripts/deploy/post-check.sh`.
+It checks the service, counts ERROR/Traceback lines since its start without
+printing log contents, reports the deployed commit and storage sizes, and
+fails for errors, missing information, or less than 3 GiB free. `PROJECT_NAME`
+and `PROJECT_DIR` select a non-default service and installation directory.
+The commit receipt is installed by the canonical deploy; older deployments
+will need a successful deploy before this check can report a version.
+
+Create a consistent online backup and verify an isolated temporary restore:
+
+```sh
+python3 scripts/deploy/sqlite-backup.py /opt/sub-manager/admin.db /secure/backup.db
+python3 scripts/deploy/sqlite-restore-check.py /secure/backup.db
+```
+
+Choose an existing protected destination directory and a new backup filename;
+the command refuses to overwrite an existing file. The restore check removes
+its temporary directory when finished; `--temp-dir` selects its parent. Keep
+the encryption key (`ENCRYPTION_KEY` or the separately managed key file) and
+the deployment environment configuration backed up separately and protected;
+these scripts neither read nor include them. Store backups securely and follow
+the existing recovery procedure before replacing a live database.

@@ -317,8 +317,26 @@ if ($ResolvedKeyPath) {
     $InvokeArgs += '-KeyPath', $ResolvedKeyPath
 }
 
-& pwsh -NoProfile -ExecutionPolicy Bypass -File $InvokeScript @InvokeArgs
-$DeployExit = $LASTEXITCODE
+$SavedPath = $env:PATH
+try {
+    if ($env:OS -eq 'Windows_NT') {
+        $System32 = Join-Path $env:SystemRoot 'System32'
+        $ExpectedTar = Join-Path $System32 'tar.exe'
+        $env:PATH = "$System32;$SavedPath"
+        $TarCommand = Get-Command tar.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $TarCommand -or $TarCommand.Source -ine $ExpectedTar) {
+            throw 'Windows System32 tar.exe is required for archive inspection but was not found in PATH.'
+        }
+        $TarVersion = & $ExpectedTar --version 2>&1
+        if ($LASTEXITCODE -ne 0 -or "$TarVersion" -notmatch 'bsdtar') {
+            throw 'Windows System32 tar.exe must be bsdtar; archive inspection cannot proceed.'
+        }
+    }
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $InvokeScript @InvokeArgs
+    $DeployExit = $LASTEXITCODE
+} finally {
+    $env:PATH = $SavedPath
+}
 
 if ($DeployExit -ne 0) {
     Write-Fail "invoke-remote-deploy.ps1 завершился с кодом $DeployExit"
@@ -361,16 +379,15 @@ if ($HealthOk -lt 3) {
 }
 Write-Ok 'Health: 3/3 OK'
 
-Write-Step 'Post-check: journalctl — ошибки за последние 3 минуты'
-$JournalCmd = 'journalctl -u sub-manager --since "-3 minutes" --no-pager -q 2>/dev/null | grep -E "ERROR|Traceback|Exception" | head -20'
-$JournalOut = Invoke-RemoteSsh -Command $JournalCmd -PassThru
-if ($JournalOut -match 'ERROR|Traceback|Exception') {
-    Write-Warn "Обнаружены ошибки в journalctl за последние 3 минуты:"
-    $JournalOut | ForEach-Object { Write-Info "  $_" }
-    Write-Warn "Проверьте логи вручную. Деплой формально завершён, но могут быть проблемы."
-} else {
-    Write-Ok 'journalctl: ошибок не обнаружено'
-}
+Write-Step 'Post-check: journalctl, service, version and storage'
+$PostCheck = Join-Path $ScriptDir 'post-check.sh'
+$sshArgs = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-p', "$($T.Port)")
+if ($ResolvedKeyPath) { $sshArgs += '-i', $ResolvedKeyPath }
+# Send the script as base64 so Windows PowerShell cannot add a CR/LF to the piped text.
+$PostCheckB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($PostCheck))
+$sshArgs += "$($T.User)@$($T.HostName)", "echo $PostCheckB64 | base64 -d | bash"
+& ssh @sshArgs
+if ($LASTEXITCODE -ne 0) { Fail 'Post-check failed; cleanup was skipped.' }
 
 # ---------------------------------------------------------------------------
 # Очистка старых рабочих каталогов (только после успешного post-check)
