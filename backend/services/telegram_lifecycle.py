@@ -398,9 +398,9 @@ class TelegramLifecycleWorker:
             self._finalize_operation(conn, claimed.operation_id)
 
     def _defer_reconcile(self, claimed: ClaimedLifecycleAttempt, error_code: str) -> None:
-        if claimed.attempt_count >= 5:
-            terminal_code = "node_unreachable" if error_code == "remote_read_uncertain" else error_code
-            self._finish_attempt(claimed, status="failed", error_code=terminal_code)
+        # Only a pre-write read failure may give up; after an uncertain write we must keep reconciling.
+        if claimed.attempt_count >= 5 and error_code == "remote_read_uncertain":
+            self._finish_attempt(claimed, status="failed", error_code="node_unreachable")
             return
         delay_seconds = min(300, 2 ** min(claimed.attempt_count, 8)) + secrets.randbelow(1000) / 1000
         next_attempt = _timestamp(self._now() + timedelta(seconds=delay_seconds))

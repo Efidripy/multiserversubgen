@@ -474,3 +474,20 @@ def test_node_bulk_remove_deletes_only_the_target_binding_and_keeps_customer_act
             "SELECT provisioning_enabled FROM telegram_node_policies WHERE node_id = 1"
         ).fetchone() == (0,)
     assert rows == [(1, "missing"), (2, "confirmed")]
+
+
+def test_fifth_attempt_with_uncertain_write_keeps_reconciling_instead_of_failing(tmp_path):
+    db_path, _registry, _customer_id, operation_id = _queue(tmp_path, "suspend")
+    port = FakeLifecyclePort(update_error=ProvisioningRemoteError("connection reset"))
+    port.clients = [RemoteClient("remote-id", "lifecycle-worker", "remote-sub", "xtls-rprx-vision", True)]
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    worker = _worker(db_path, port, now=lambda: now)
+    for _ in range(7):
+        assert worker.run_once().outcome == "ambiguous"
+        now += timedelta(hours=1)
+    with connect(db_path) as conn:
+        status, code = conn.execute(
+            "SELECT status, error_code FROM telegram_customer_operation_attempts WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+    assert (status, code) == ("ambiguous", "remote_update_uncertain")
