@@ -7,6 +7,7 @@ from typing import Callable, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from core import worker_health
 from routers.telegram_contracts import (
     ApproveExistingRequest,
     ApproveNewRequest,
@@ -119,6 +120,11 @@ def build_telegram_admin_router(
         ):
             return HTTPException(status_code=409, detail=str(exc))
         return HTTPException(status_code=400, detail=str(exc))
+
+    @router.get("/api/v1/telegram/workers")
+    def get_workers(request: Request):
+        require_admin(request)
+        return worker_health.snapshot()
 
     @router.get("/api/v1/telegram/bot-configuration")
     def get_bot_configuration(request: Request):

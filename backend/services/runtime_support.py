@@ -190,6 +190,10 @@ class AuditQueueRuntime:
         with self._memory_lock:
             return self._memory_queue.qsize() + len(self._retry_payloads)
 
+    def has_retained_batch(self) -> bool:
+        with self._memory_lock:
+            return bool(self._retry_payloads)
+
     def close_admission(self) -> None:
         self._accepting_events = False
 

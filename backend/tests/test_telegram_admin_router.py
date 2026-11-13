@@ -681,3 +681,18 @@ def test_customer_repair_route_requires_manage_permission(tmp_path):
     assert {"code": "identity_not_approved"} in response.json()["problems"]
     viewer = _build_client(tmp_path, username="viewer", role="viewer")
     assert viewer.post(f"/api/v1/telegram/customers/{customer_id}/repair").status_code == 403
+
+
+def test_telegram_workers_route_structure(tmp_path):
+    from core import worker_health
+
+    worker_health.register("test.admin.worker", 60)
+    response = _build_client(tmp_path).get("/api/v1/telegram/workers")
+    assert response.status_code == 200
+    record = next(item for item in response.json() if item["name"] == "test.admin.worker")
+    assert set(record) == {"name", "interval_sec", "last_start_at", "last_success_at",
+                           "last_error_code", "consecutive_failures", "healthy"}
+
+
+def test_telegram_workers_route_requires_capability(tmp_path):
+    assert _build_client(tmp_path, role="viewer").get("/api/v1/telegram/workers").status_code == 403

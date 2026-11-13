@@ -1,3 +1,4 @@
+from core import worker_health
 import pam
 import os
 import asyncio
@@ -572,7 +573,9 @@ async def _telegram_provisioning_worker_loop(worker_tracker) -> None:
     schedule_worker = TelegramScheduleWorker(
         registry=TelegramRegistry(DB_PATH), worker_id=f"telegram-schedule:{os.getpid()}"
     )
+    worker_health.register("telegram.provisioning", max(1, SETTINGS.telegram.provisioning_worker_interval_sec))
     while worker_tracker.accepting:
+        worker_health.mark_start("telegram.provisioning")
         try:
             schedule_result = await worker_tracker.run(
                 "telegram.schedule.run_once", schedule_worker.run_once
@@ -585,8 +588,15 @@ async def _telegram_provisioning_worker_loop(worker_tracker) -> None:
             )
         except LifecycleWorkAdmissionClosed:
             return
+        except Exception as exc:
+            worker_health.mark_failure("telegram.provisioning", type(exc).__name__)
+            logger.warning("Telegram worker failed: %s", type(exc).__name__)
+            if not await worker_tracker.wait_or_stop(SETTINGS.telegram.provisioning_worker_interval_sec):
+                return
+            continue
         # A finite sleep also gives cancellation a predictable safe point and
         # prevents a busy loop when a fleet contains many fast local attempts.
+        worker_health.mark_success("telegram.provisioning")
         if not await worker_tracker.wait_or_stop(
             0.1
             if schedule_result.processed
@@ -608,13 +618,22 @@ async def _telegram_existing_discovery_worker_loop(worker_tracker) -> None:
         ),
         worker_id=f"telegram-existing-discovery:{os.getpid()}",
     )
+    worker_health.register("telegram.existing_discovery", max(1, SETTINGS.telegram.provisioning_worker_interval_sec))
     while worker_tracker.accepting:
+        worker_health.mark_start("telegram.existing_discovery")
         try:
             result = await worker_tracker.run(
                 "telegram.existing_discovery.run_once", worker.run_once
             )
         except LifecycleWorkAdmissionClosed:
             return
+        except Exception as exc:
+            worker_health.mark_failure("telegram.existing_discovery", type(exc).__name__)
+            logger.warning("Telegram worker failed: %s", type(exc).__name__)
+            if not await worker_tracker.wait_or_stop(SETTINGS.telegram.provisioning_worker_interval_sec):
+                return
+            continue
+        worker_health.mark_success("telegram.existing_discovery")
         if not await worker_tracker.wait_or_stop(
             0.1
             if result.processed
@@ -637,13 +656,22 @@ async def _telegram_outbox_worker_loop(worker_tracker) -> None:
         ),
         worker_id=f"telegram-outbox:{os.getpid()}",
     )
+    worker_health.register("telegram.outbox", max(1, SETTINGS.telegram.outbox_worker_interval_sec))
     while worker_tracker.accepting:
+        worker_health.mark_start("telegram.outbox")
         try:
             result = await worker_tracker.run(
                 "telegram.outbox.run_once", worker.run_once
             )
         except LifecycleWorkAdmissionClosed:
             return
+        except Exception as exc:
+            worker_health.mark_failure("telegram.outbox", type(exc).__name__)
+            logger.warning("Telegram worker failed: %s", type(exc).__name__)
+            if not await worker_tracker.wait_or_stop(SETTINGS.telegram.outbox_worker_interval_sec):
+                return
+            continue
+        worker_health.mark_success("telegram.outbox")
         if not await worker_tracker.wait_or_stop(
             0.1 if result.processed else SETTINGS.telegram.outbox_worker_interval_sec
         ):
@@ -680,11 +708,20 @@ async def _telegram_retention_worker_loop(worker_tracker) -> None:
     """Run local-only Telegram data retention on its own opt-in schedule."""
 
     worker = TelegramRetentionService(DB_PATH)
+    worker_health.register("telegram.retention", max(1, SETTINGS.telegram.retention_worker_interval_sec))
     while worker_tracker.accepting:
+        worker_health.mark_start("telegram.retention")
         try:
             await worker_tracker.run("telegram.retention.run_once", worker.run_once)
         except LifecycleWorkAdmissionClosed:
             return
+        except Exception as exc:
+            worker_health.mark_failure("telegram.retention", type(exc).__name__)
+            logger.warning("Telegram worker failed: %s", type(exc).__name__)
+            if not await worker_tracker.wait_or_stop(SETTINGS.telegram.retention_worker_interval_sec):
+                return
+            continue
+        worker_health.mark_success("telegram.retention")
         if not await worker_tracker.wait_or_stop(
             SETTINGS.telegram.retention_worker_interval_sec
         ):
@@ -707,11 +744,20 @@ async def _telegram_reminder_worker_loop(worker_tracker) -> None:
             )
         ),
     )
+    worker_health.register("telegram.reminder", max(1, SETTINGS.telegram.reminder_worker_interval_sec))
     while worker_tracker.accepting:
+        worker_health.mark_start("telegram.reminder")
         try:
             await worker_tracker.run("telegram.reminder.run_once", worker.run_once)
         except LifecycleWorkAdmissionClosed:
             return
+        except Exception as exc:
+            worker_health.mark_failure("telegram.reminder", type(exc).__name__)
+            logger.warning("Telegram worker failed: %s", type(exc).__name__)
+            if not await worker_tracker.wait_or_stop(SETTINGS.telegram.reminder_worker_interval_sec):
+                return
+            continue
+        worker_health.mark_success("telegram.reminder")
         if not await worker_tracker.wait_or_stop(
             SETTINGS.telegram.reminder_worker_interval_sec
         ):
@@ -755,13 +801,16 @@ async def _telegram_polling_worker_loop(worker_tracker) -> None:
         mark_update_processed=registry.mark_update_processed,
         retry_update_response=service.retry_update_response,
     )
+    worker_health.register("telegram.polling", max(1, SETTINGS.telegram.polling_timeout_sec + 5))
     try:
         while worker_tracker.accepting:
+            worker_health.mark_start("telegram.polling")
             try:
                 await worker_tracker.run("telegram.polling.run_once", worker.run_once)
             except LifecycleWorkAdmissionClosed:
                 return
             except Exception as exc:
+                worker_health.mark_failure("telegram.polling", type(exc).__name__)
                 # Keep the application healthy if the selected Bot API route is
                 # temporarily unavailable. The next run retries through the same
                 # fail-closed transport without changing global proxy settings.
@@ -773,22 +822,68 @@ async def _telegram_polling_worker_loop(worker_tracker) -> None:
                 if not await worker_tracker.wait_or_stop(5):
                     return
                 continue
+            worker_health.mark_success("telegram.polling")
             if not await worker_tracker.wait_or_stop(0.1):
                 return
     finally:
         worker.close()
 
 
+async def _audit_health_loop(tracker):
+    name = "audit"
+    interval = max(1, AUDIT_IDLE_SLEEP_SEC)
+    worker_health.register(name, interval)
+    while tracker.accepting:
+        worker_health.mark_start(name)
+        try:
+            persisted = await tracker.run(
+                "audit.persist_memory_batch", audit_runtime.persist_memory_batch, audit_runtime.batch_size
+            )
+            drained = await tracker.run("audit.drain_batch", audit_runtime.drain_batch, audit_runtime.batch_size)
+        except LifecycleWorkAdmissionClosed:
+            return
+        except Exception as exc:
+            worker_health.mark_failure(name, type(exc).__name__)
+            logger.warning("Audit worker failed: %s", type(exc).__name__)
+            delay = AUDIT_IDLE_SLEEP_SEC
+        else:
+            if persisted == 0 and audit_runtime.has_retained_batch():
+                worker_health.mark_failure(name, "persist_failed")
+                delay = AUDIT_IDLE_SLEEP_SEC
+            else:
+                worker_health.mark_success(name)
+                delay = AUDIT_ACTIVE_SLEEP_SEC if persisted > 0 or drained > 0 else AUDIT_IDLE_SLEEP_SEC
+        if not await tracker.wait_or_stop(delay):
+            return
+
+
+async def _adguard_health_loop(tracker):
+    name = "adguard"
+    interval = max(20, ADGUARD_COLLECT_INTERVAL_SEC)
+    worker_health.register(name, interval)
+    while tracker.accepting:
+        worker_health.mark_start(name)
+        try:
+            await adguard_runtime.collect_once(tracker)
+        except LifecycleWorkAdmissionClosed:
+            return
+        except Exception as exc:
+            worker_health.mark_failure(name, type(exc).__name__)
+            logger.warning("AdGuard worker failed: %s", type(exc).__name__)
+        else:
+            worker_health.mark_success(name)
+        if not await tracker.wait_or_stop(interval):
+            return
+
+
 app.router.lifespan_context = build_lifespan(
     sync_node_history_names_with_nodes=sync_node_history_names_with_nodes,
     backfill_traffic_history_snapshots=live_stats_runtime.backfill_node_history_snapshots,
-    audit_worker_loop=audit_worker_loop,
+    audit_worker_loop=_audit_health_loop,
     audit_flush=audit_runtime.flush,
     audit_close_admission=audit_runtime.close_admission,
     snapshot_collector=snapshot_collector,
-    adguard_collector_loop=lambda worker_tracker: adguard_collector_loop(
-        worker_tracker
-    ),
+    adguard_collector_loop=_adguard_health_loop,
     asyncio_module=asyncio,
     subscription_remote_rules_refresher=subscription_remote_rules_refresher,
     telegram_existing_discovery_worker_loop=(
