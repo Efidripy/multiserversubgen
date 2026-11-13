@@ -233,6 +233,21 @@ def test_failed_drift_read_does_not_mark_suspended_binding_missing(tmp_path):
         assert conn.execute("SELECT management_state FROM customer_node_bindings").fetchone()[0] == "confirmed"
 
 
+def test_node_offline_drift_scan_preserves_entire_binding(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+
+    class OfflineManager:
+        def get_node_clients_strict(self, node):
+            raise RuntimeError("offline")
+
+    with connect(db_path) as conn:
+        before = conn.execute("SELECT * FROM customer_node_bindings").fetchall()
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=OfflineManager())
+    assert scanner.scan().unavailable_node_ids == (1,)
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT * FROM customer_node_bindings").fetchall() == before
+
+
 def test_panel_bot_token_is_write_only_encrypted_and_versioned(tmp_path):
     db_path = str(tmp_path / "bot-token.db")
     init_db(db_path)

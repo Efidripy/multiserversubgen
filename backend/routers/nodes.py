@@ -47,7 +47,9 @@ def _serialize_tags(value) -> str:
 
 def _panel_url_key(url):
     parsed = urlparse(url)
-    return parsed.scheme.lower(), parsed.hostname.lower(), parsed.port, parsed.path.strip("/")
+    scheme = parsed.scheme.lower()
+    port = parsed.port or {"https": 443, "http": 80}.get(scheme)
+    return scheme, parsed.hostname.lower(), port, parsed.path.strip("/")
 
 
 def _check_panel_duplicate(conn, new_connection, exclude_id=None):
@@ -67,6 +69,22 @@ def _check_panel_duplicate(conn, new_connection, exclude_id=None):
             continue
         if node_key == new_key:
             raise HTTPException(status_code=409, detail=f"Another node already uses this panel: #{row[0]} {row[1]}")
+
+
+def find_panel_duplicates(db_path):
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, name, ip, port, base_path, access_path, panel_url, scheme FROM nodes ORDER BY id"
+        ).fetchall()
+    groups = {}
+    for row in rows:
+        node = dict(zip(("id", "name", "ip", "port", "base_path", "access_path", "panel_url", "scheme"), row))
+        try:
+            key = _panel_url_key(build_panel_base_url(node))
+        except (ValueError, AttributeError):
+            continue
+        groups.setdefault(key, []).append({"id": node["id"], "name": node["name"]})
+    return [{"panel_key": list(key), "nodes": nodes} for key, nodes in groups.items() if len(nodes) > 1]
 
 
 def build_nodes_router(
@@ -89,6 +107,12 @@ def build_nodes_router(
     reconcile_telegram_node: Callable[..., object] | None = None,
 ):
     router = APIRouter()
+
+    @router.get("/api/v1/nodes/duplicates")
+    def list_node_duplicates(request: Request):
+        if not check_auth(request):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        return ORJSONResponse(content=find_panel_duplicates(db_path), headers={"Cache-Control": "no-store"})
 
     @router.get("/api/v1/nodes")
     async def list_nodes(request: Request, refresh: bool = False):
@@ -432,6 +456,19 @@ def build_nodes_router(
                     new_endpoint = _panel_url_key(build_panel_base_url(updated_connection))
                     if old_endpoint != new_endpoint:
                         _check_panel_duplicate(conn, updated_connection, node_id)
+                else:
+                    old_endpoint = new_endpoint = None
+                login_changed = has_user and str(data.get("user") or "").strip() != str(existing[2] or "")
+                if (old_endpoint != new_endpoint or login_changed) and data.get("confirm_panel_change") is not True:
+                    has_bindings = conn.execute(
+                        "SELECT 1 FROM customer_node_bindings WHERE node_id = ? LIMIT 1", (node_id,)
+                    ).fetchone()
+                    if has_bindings:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Cannot confirm this is the same panel for existing bot bindings; "
+                                   "set confirm_panel_change=true to proceed",
+                        )
                 update_fields = []
                 update_values = []
 

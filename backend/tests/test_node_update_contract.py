@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import os
 import sqlite3
 import sys
@@ -16,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from routers import nodes as nodes_router
 from routers.nodes import build_nodes_router
+from core.router_registration import _install_node_duplicate_startup_check
 from services.db_bootstrap import connect, init_db
 from services.telegram_drift import TelegramDriftScanner
 from services.telegram_registry import TelegramRegistry
@@ -130,6 +132,72 @@ def _insert_duplicate(db_path):
                VALUES (2, 'duplicate', 'https://OLD.example.test:8443/old-panel/', 'root', 'root', 'x',
                        'OLD.example.test', '8443', 'old-panel/', 'old-panel/', 'https', 0)"""
         )
+
+
+def _insert_binding(db_path):
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="test-user", origin="manual", email_source="admin", public_code="test-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO customer_node_bindings "
+            "(customer_id, node_id, remote_client_id, remote_sub_id, remote_email, source, management_state) "
+            "VALUES (?, 1, 'client', 'sub', 'test-user', 'admin_confirmed', 'confirmed')", (customer_id,)
+        )
+
+
+def test_node_duplicates_lists_legacy_groups_without_secrets(node_client):
+    client, db_path, _ = node_client
+    _insert_duplicate(db_path)
+    response = client.get("/api/v1/nodes/duplicates")
+    assert response.status_code == 200
+    assert response.json() == [{"panel_key": ["https", "old.example.test", 8443, "old-panel"],
+                               "nodes": [{"id": 1, "name": "edge-1"}, {"id": 2, "name": "duplicate"}]}]
+    assert "password" not in response.text
+
+
+def test_node_duplicates_startup_warns_once(node_client, caplog):
+    _, db_path, _ = node_client
+    _insert_duplicate(db_path)
+
+    class Collector:
+        async def start(self, tracker):
+            return tracker
+
+    collector = Collector()
+    logger = logging.getLogger("test.node.duplicates")
+    _install_node_duplicate_startup_check(collector, db_path, logger)
+    _install_node_duplicate_startup_check(collector, db_path, logger)
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        assert asyncio.run(collector.start("tracker")) == "tracker"
+    assert len(caplog.records) == 1
+    assert "Duplicate panel endpoints" in caplog.text
+
+
+@pytest.mark.parametrize("payload", [
+    {"url": "https://new.example.test:8443/old-panel"},
+    {"url": "https://old.example.test:9443/old-panel"},
+    {"url": "https://old.example.test:8443/new-panel"},
+    {"user": "other"},
+])
+def test_node_bound_panel_change_requires_explicit_confirmation(node_client, payload):
+    client, db_path, _ = node_client
+    _insert_binding(db_path)
+    before = _node_row(db_path)
+    response = client.put("/api/v1/nodes/1", json=payload)
+    assert response.status_code == 409
+    assert "confirm_panel_change=true" in response.json()["detail"]
+    assert _node_row(db_path) == before
+    response = client.put("/api/v1/nodes/1", json={**payload, "confirm_panel_change": True})
+    assert response.status_code == 200
+
+
+def test_node_bound_unchanged_login_and_url_need_no_confirmation(node_client):
+    client, db_path, _ = node_client
+    _insert_binding(db_path)
+    response = client.put("/api/v1/nodes/1", json={"user": "root", "url": "https://OLD.example.test:8443/old-panel/"})
+    assert response.status_code == 200
 
 
 def test_node_add_rejects_duplicate_panel(node_client):
@@ -295,7 +363,7 @@ def test_node_endpoint_edit_runs_real_drift_scan_for_that_node_only(node_client,
     )
 
     response = _client_for(db_path, scanner.scan).put(
-        "/api/v1/nodes/1", json={"url": "https://edge.example.test:8443/new-panel/"}
+        "/api/v1/nodes/1", json={"url": "https://edge.example.test:8443/new-panel/", "confirm_panel_change": True}
     )
 
     assert response.status_code == 200
@@ -425,3 +493,11 @@ def test_node_delete_removes_all_local_telegram_and_node_references(node_client)
         ):
             assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM customers WHERE id = ?", (customer_id,)).fetchone()[0] == 1
+
+
+def test_panel_url_key_treats_default_port_as_explicit():
+    from routers.nodes import _panel_url_key
+
+    assert _panel_url_key("https://panel.example.test/abc") == _panel_url_key("https://panel.example.test:443/abc")
+    assert _panel_url_key("http://panel.example.test/abc") == _panel_url_key("http://panel.example.test:80/abc")
+    assert _panel_url_key("https://panel.example.test/abc") != _panel_url_key("https://panel.example.test:8443/abc")
