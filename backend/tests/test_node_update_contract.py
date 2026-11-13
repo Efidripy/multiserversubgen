@@ -493,3 +493,11 @@ def test_node_delete_removes_all_local_telegram_and_node_references(node_client)
         ):
             assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM customers WHERE id = ?", (customer_id,)).fetchone()[0] == 1
+
+
+def test_panel_url_key_treats_default_port_as_explicit():
+    from routers.nodes import _panel_url_key
+
+    assert _panel_url_key("https://panel.example.test/abc") == _panel_url_key("https://panel.example.test:443/abc")
+    assert _panel_url_key("http://panel.example.test/abc") == _panel_url_key("http://panel.example.test:80/abc")
+    assert _panel_url_key("https://panel.example.test/abc") != _panel_url_key("https://panel.example.test:8443/abc")

@@ -47,7 +47,9 @@ def _serialize_tags(value) -> str:
 
 def _panel_url_key(url):
     parsed = urlparse(url)
-    return parsed.scheme.lower(), parsed.hostname.lower(), parsed.port, parsed.path.strip("/")
+    scheme = parsed.scheme.lower()
+    port = parsed.port or {"https": 443, "http": 80}.get(scheme)
+    return scheme, parsed.hostname.lower(), port, parsed.path.strip("/")
 
 
 def _check_panel_duplicate(conn, new_connection, exclude_id=None):
