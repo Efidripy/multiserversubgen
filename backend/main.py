@@ -14,6 +14,7 @@ except Exception:
     redis = None
 
 from core.lifespan import build_lifespan
+from core.telegram_drift_worker import run_drift_worker
 from core.lifecycle_work import LifecycleWorkAdmissionClosed
 from core.app_settings import load_app_settings
 from core.main_facades import (
@@ -44,6 +45,7 @@ from services.telegram_polling import TelegramBotApiClient, TelegramPollingWorke
 from services.telegram_registration import TelegramRegistrationService
 from services.telegram_traffic import TelegramTrafficService
 from services.telegram_registry import TelegramRegistry
+from services.telegram_drift import TelegramDriftScanner
 from services.telegram_retention import TelegramRetentionService
 from services.telegram_reminders import TelegramReminderService
 from services.telegram_schedules import TelegramScheduleWorker
@@ -785,6 +787,13 @@ app.router.lifespan_context = build_lifespan(
         if SETTINGS.telegram.retention_worker_enabled
         else None
     ),
+    telegram_drift_worker_loop=(
+        lambda tracker: run_drift_worker(
+            tracker,
+            TelegramDriftScanner(registry=TelegramRegistry(DB_PATH), list_nodes=node_service.list_nodes, client_manager=client_mgr),
+            SETTINGS.telegram.drift_scan_interval_sec, logger,
+        )
+    ) if SETTINGS.telegram.enabled and SETTINGS.telegram.drift_scan_interval_sec else None,
     telegram_reminder_worker_loop=(
         (lambda worker_tracker: _telegram_reminder_worker_loop(worker_tracker))
         if SETTINGS.telegram.reminder_worker_enabled

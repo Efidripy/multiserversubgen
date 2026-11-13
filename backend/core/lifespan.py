@@ -18,6 +18,7 @@ def build_lifespan(
     telegram_outbox_worker_loop=None,
     telegram_retention_worker_loop=None,
     telegram_reminder_worker_loop=None,
+    telegram_drift_worker_loop=None,
     telegram_polling_worker_loop=None,
     subscription_remote_rules_refresher=None,
 ):
@@ -46,6 +47,7 @@ def build_lifespan(
             telegram_outbox_worker_loop,
             telegram_retention_worker_loop,
             telegram_reminder_worker_loop,
+            telegram_drift_worker_loop,
             telegram_polling_worker_loop,
         ]
         tasks = [
