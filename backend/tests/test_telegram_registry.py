@@ -1926,6 +1926,39 @@ def test_repair_customer_waits_for_initial_job(tmp_path, status):
         assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities").fetchone()[0] == 0
 
 
+def _initial_job(conn, customer_id, status, attempts):
+    job_id = conn.execute("""INSERT INTO telegram_provisioning_jobs
+        (customer_id, trigger, idempotency_key, status, policy_snapshot_digest, created_by, finished_at)
+        VALUES (?, 'approve_new', 'repair-job', ?, 'digest', 'admin', CURRENT_TIMESTAMP)""", (customer_id, status)).lastrowid
+    for node_id, attempt_status, error_code in attempts:
+        conn.execute("""INSERT INTO telegram_provisioning_attempts
+            (job_id, node_id, inbound_id, status, desired_client_id, desired_sub_id, desired_flow,
+             desired_total_bytes, desired_validity_days, desired_expiry_time, desired_client_enabled,
+             policy_version, error_code)
+            VALUES (?, ?, 1, ?, 'client', 'sub', 'xtls-rprx-vision', 0, 0, 0, 1, 1, ?)""",
+            (job_id, node_id, attempt_status, error_code))
+    return job_id
+
+
+def test_repair_customer_accepts_finished_partial_job_with_node_removal_skips(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        _initial_job(conn, customer_id, "partial", [(1, "succeeded", None), (2, "skipped", "node_bulk_remove_cancelled")])
+    result = registry.repair_customer(customer_id, "admin")
+    assert result == {"fixed": ["remote_snapshot_ready"], "problems": []}
+
+
+def test_repair_customer_keeps_cancelled_job_with_failed_attempt_blocking(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        job_id = _initial_job(conn, customer_id, "cancelled", [(1, "succeeded", None), (2, "failed", "identity_conflict")])
+    result = registry.repair_customer(customer_id, "admin")
+    assert not result["fixed"]
+    assert {"code": "unfinished_job", "job_id": job_id, "status": "cancelled"} in result["problems"]
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities").fetchone()[0] == 0
+
+
 def test_repair_customer_reports_missing_binding_and_operation(tmp_path):
     registry, customer_id, db_path = _repair_fixture(tmp_path)
     with connect(db_path) as conn:

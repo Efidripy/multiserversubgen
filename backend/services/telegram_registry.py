@@ -7155,8 +7155,8 @@ class TelegramRegistry:
             if identity is None:
                 problems.append({"code": "identity_not_approved"})
             jobs = conn.execute(
-                "SELECT id, status FROM telegram_provisioning_jobs WHERE customer_id = ? "
-                "AND trigger = 'approve_new' AND status IN ('queued', 'running', 'partial')", (customer_id,)
+                f"SELECT j.id, j.status FROM telegram_provisioning_jobs j WHERE j.customer_id = ? "
+                f"AND j.trigger = 'approve_new' AND NOT {INITIAL_JOB_COMPLETE_SQL}", (customer_id,)
             ).fetchall()
             for job_id, status in jobs:
                 problems.append({"code": "unfinished_job", "job_id": int(job_id), "status": str(status)})
@@ -7205,8 +7205,6 @@ class TelegramRegistry:
                         "INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id) "
                         "VALUES ('customer_repaired', 'admin', ?, 'customer', ?)", (str(actor), str(customer_id))
                     )
-            if initial_job_incomplete(conn, customer_id) and not jobs:
-                problems.append({"code": "initial_job_incomplete"})
             if identity is not None and not bool(identity[0]) and not changed:
                 problems.append({"code": "snapshot_incomplete"})
         return {"fixed": ["remote_snapshot_ready"] if changed else [], "problems": problems}
