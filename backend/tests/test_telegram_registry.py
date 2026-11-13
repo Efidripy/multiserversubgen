@@ -1862,3 +1862,24 @@ def test_broadcast_photo_columns_are_added_to_existing_tables(tmp_path):
                                 ("telegram_update_responses", {"photo_file_ids"})):
             columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
             assert expected <= columns
+
+
+def test_dismissed_partial_node_operation_does_not_block_new_operation(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "test-node")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(email_display="test-user", origin="manual", email_source="admin", public_code="test-user")
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO customer_node_bindings (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email, source, management_state, desired_enabled) VALUES (?, 1, 1, 'client', 'sub', 'test-user', 'admin_confirmed', 'confirmed', 1)", (customer_id,))
+    preview = registry.preview_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="suspend_node")
+    operation = registry.queue_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="suspend_node", expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key="first", created_by="admin")
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_customer_operations SET status = 'partial' WHERE id = ?", (operation.operation_id,))
+    with pytest.raises(LifecycleUnavailableError, match="active operation"):
+        registry.preview_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="suspend_node")
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_customer_operations SET dismissed_at = CURRENT_TIMESTAMP WHERE id = ?", (operation.operation_id,))
+    preview = registry.preview_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="suspend_node")
+    queued = registry.queue_customer_node_operation(customer_id=customer_id, node_id=1, operation_type="suspend_node", expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key="second", created_by="admin")
+    assert queued.status == "queued"

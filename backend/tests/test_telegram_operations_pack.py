@@ -483,3 +483,23 @@ def test_manual_locale_is_not_overwritten_by_the_telegram_client_language_on_cal
     assert "Язык: русский." in changed[0].text
     assert "Доступ работает" in menu[0].text
     assert "Access" not in menu[0].text
+
+
+def test_repeated_missing_scan_preserves_binding_and_audit(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customer_node_bindings SET desired_enabled = 0")
+
+    class Manager:
+        def get_node_clients_strict(self, node):
+            return []
+
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
+    scanner.scan()
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customer_node_bindings SET updated_at = '2000-01-01 00:00:00'")
+        before = conn.execute("SELECT management_state, row_version, updated_at FROM customer_node_bindings").fetchone()
+    scanner.scan()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state, row_version, updated_at FROM customer_node_bindings").fetchone() == before
+        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_missing'").fetchone()[0] == 1

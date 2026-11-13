@@ -6037,6 +6037,7 @@ class TelegramRegistry:
                 FROM telegram_customer_operation_attempts AS a
                 JOIN telegram_customer_operations AS o ON o.id = a.operation_id
                 WHERE a.node_id = ? AND o.status IN ('queued', 'running', 'partial')
+                  AND o.dismissed_at IS NULL
                   AND a.status IN ('pending', 'ambiguous', 'reconciling', 'writing')
                 LIMIT 1
                 """,
@@ -7344,7 +7345,7 @@ class TelegramRegistry:
             FROM telegram_customer_operations AS o
             JOIN telegram_customer_operation_attempts AS a ON a.operation_id = o.id
             WHERE o.customer_id = ? AND a.node_id = ?
-              AND o.status IN ('queued', 'running', 'partial')
+              AND o.status IN ('queued', 'running', 'partial') AND o.dismissed_at IS NULL
             LIMIT 1
             """,
             (customer_id, node_id),
@@ -8643,6 +8644,15 @@ class TelegramRegistry:
                     updated_at = CURRENT_TIMESTAMP
                 WHERE node_id IN ({placeholders})
                   AND management_state IN ('missing', 'conflict')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM telegram_drift_findings AS f
+                    WHERE f.status IN ('open', 'ignored') AND f.kind IN ('binding_missing', 'binding_conflict')
+                      AND f.customer_id = customer_node_bindings.customer_id
+                      AND f.node_id = customer_node_bindings.node_id AND customer_node_bindings.inbound_id = 1
+                      AND f.remote_client_id = COALESCE(customer_node_bindings.remote_client_id, '')
+                      AND f.remote_sub_id = COALESCE(customer_node_bindings.remote_sub_id, '')
+                      AND lower(f.remote_email) = lower(customer_node_bindings.remote_email)
+                  )
                 """,
                 node_ids,
             )
@@ -8665,6 +8675,8 @@ class TelegramRegistry:
                   AND COALESCE(customer_node_bindings.remote_client_id, '') = finding.remote_client_id
                   AND COALESCE(customer_node_bindings.remote_sub_id, '') = finding.remote_sub_id
                   AND lower(customer_node_bindings.remote_email) = lower(finding.remote_email)
+                  AND customer_node_bindings.management_state != CASE finding.kind
+                      WHEN 'binding_missing' THEN 'missing' ELSE 'conflict' END
                 """,
                 node_ids,
             )
