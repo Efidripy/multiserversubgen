@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from fastapi.concurrency import run_in_threadpool
+
 from routers.auth import build_auth_router
 from routers.clients import build_clients_router
 from routers.inbounds import build_inbounds_router
 from routers.live_data import build_live_data_router
 from routers.monitoring import build_monitoring_router
-from routers.nodes import build_nodes_router
+from routers.nodes import build_nodes_router, find_panel_duplicates
 from routers.observability import build_observability_router
 from routers.operations import build_operations_router
 from routers.realtime import build_realtime_router
@@ -16,6 +18,21 @@ from routers.telegram_webhook import build_telegram_webhook_router
 from services.telegram_drift import TelegramDriftScanner
 from services.telegram_provisioning import ClientManagerLegacyDiscovery
 from services.telegram_registry import TelegramRegistry
+
+
+def _install_node_duplicate_startup_check(snapshot_collector, db_path, logger):
+    if getattr(snapshot_collector, "_node_duplicate_startup_check_installed", False):
+        return
+    original_start = snapshot_collector.start
+
+    async def start_with_duplicate_warning(*args, **kwargs):
+        duplicates = await run_in_threadpool(find_panel_duplicates, db_path)
+        if duplicates:
+            logger.warning("Duplicate panel endpoints found in %s groups; see /api/v1/nodes/duplicates", len(duplicates))
+        return await original_start(*args, **kwargs)
+
+    snapshot_collector.start = start_with_duplicate_warning
+    snapshot_collector._node_duplicate_startup_check_installed = True
 
 
 def register_app_routers(
@@ -95,6 +112,7 @@ def register_app_routers(
     subscription_profile_update_interval_hours=None,
     subscription_profile_title=None,
 ):
+    _install_node_duplicate_startup_check(snapshot_collector, db_path, logger)
     app.include_router(
         build_observability_router(
             get_latest_snapshot=snapshot_collector.latest_dashboard_snapshot,

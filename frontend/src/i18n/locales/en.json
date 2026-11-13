@@ -1289,6 +1289,7 @@
     "switchModeFailed": "Failed to change node access mode",
     "nameEmpty": "Name cannot be empty",
     "updateFailed": "Failed to update node",
+    "confirmPanelChange": "The panel address or login will change on a node that has bot-linked clients. Make sure this is the same panel. Save anyway?",
     "updateSuccess": "Node updated",
     "fillConnectionFields": "Fill URL, login and password first",
     "credentialsIncomplete": "Enter both login and a new password to change the authentication method",

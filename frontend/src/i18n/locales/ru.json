@@ -1289,6 +1289,7 @@
     "switchModeFailed": "Ошибка изменения режима доступа узла",
     "nameEmpty": "Имя не может быть пусто",
     "updateFailed": "Ошибка обновления узла",
+    "confirmPanelChange": "Адрес или логин панели изменится у узла с привязанными клиентами бота. Убедитесь, что это та же панель. Сохранить?",
     "fillConnectionFields": "Сначала заполните URL, логин и пароль",
     "connectionOkWithInbounds": "Соединение OK, inbounds: {{count}}",
     "connectionOk": "Соединение OK",

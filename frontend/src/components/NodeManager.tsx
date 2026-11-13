@@ -246,7 +246,16 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
     setLoading(true);
     setError('');
     try {
-      await updateNode(editingNode.id, result.payload);
+      try {
+        await updateNode(editingNode.id, result.payload);
+      } catch (err: any) {
+        const detail = String(err.response?.data?.detail || '');
+        if (err.response?.status === 409 && detail.includes('confirm_panel_change') && window.confirm(t('nodes.confirmPanelChange'))) {
+          await updateNode(editingNode.id, { ...(result.payload as object), confirm_panel_change: true });
+        } else {
+          throw err;
+        }
+      }
       closeEditModal();
       onReload();
       setSuccess(t('nodes.updateSuccess'));

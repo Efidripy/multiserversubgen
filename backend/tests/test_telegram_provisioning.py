@@ -72,6 +72,23 @@ def _add_backfill_binding(db_path, state):
         )
 
 
+def test_node_offline_bot_worker_preserves_binding(tmp_path):
+    db_path, _, _ = _backfill_job(tmp_path)
+    _add_backfill_binding(db_path, "confirmed")
+
+    class OfflinePort(FakeProvisioningPort):
+        def list_clients(self, **kwargs):
+            raise ProvisioningRemoteError("offline")
+
+    with connect(db_path) as conn:
+        before = conn.execute("SELECT * FROM customer_node_bindings").fetchall()
+    port = OfflinePort()
+    assert _worker(db_path, port).run_once().outcome == "ambiguous"
+    assert port.add_calls == []
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT * FROM customer_node_bindings").fetchall() == before
+
+
 def test_backfill_adopts_over_missing_binding(tmp_path):
     db_path, approval, _ = _backfill_job(tmp_path)
     _add_backfill_binding(db_path, "missing")
