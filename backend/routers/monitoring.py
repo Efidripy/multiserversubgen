@@ -161,8 +161,8 @@ def build_monitoring_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
         with connect(db_path) as conn:
-            conn.execute("DELETE FROM adguard_sources WHERE id = ?", (source_id,))
             conn.execute("DELETE FROM adguard_history WHERE source_id = ?", (source_id,))
+            conn.execute("DELETE FROM adguard_sources WHERE id = ?", (source_id,))
             conn.commit()
         return {"status": "success"}
 
