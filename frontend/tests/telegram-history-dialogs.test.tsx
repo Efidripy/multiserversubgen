@@ -4,6 +4,7 @@ import ru from '../src/i18n/locales/ru.json';
 
 const api = vi.hoisted(() => ({
   listTelegramHistoryOperations: vi.fn(), listTelegramHistoryBindings: vi.fn(), listTelegramMissingBindingNodes: vi.fn(),
+  getTelegramHistoryClearCount: vi.fn(), clearTelegramOperationHistory: vi.fn(), forgetTelegramMissingBindings: vi.fn(),
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values: Record<string, string> = {}) => {
   const value = key.split('.').reduce<unknown>((current, part) => (current as Record<string, unknown>)?.[part], ru);
@@ -47,5 +48,32 @@ describe('TelegramHistoryDialogs clear actions', () => {
     fireEvent.click(screen.getByRole('button', { name: new RegExp(ru.telegram.historyOperations) }));
     const clear = await screen.findByRole('button', { name: ru.telegram.historyClear });
     expect((clear as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('clears operations through the confirmation dialog and refreshes', async () => {
+    api.listTelegramHistoryOperations.mockResolvedValue({ items: [], total: 0 });
+    api.getTelegramHistoryClearCount.mockResolvedValue(3);
+    api.clearTelegramOperationHistory.mockResolvedValue(3);
+    const onChanged = vi.fn(async () => undefined);
+    render(<TelegramHistoryDialogs overview={overview(true)} canClear={false} mutating={false} setMutating={vi.fn()} onChanged={onChanged} />);
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(ru.telegram.historyOperations) }));
+    fireEvent.click(await screen.findByRole('button', { name: ru.telegram.historyClear }));
+    await screen.findByText(ru.telegram.historyClearConfirm.replace('{{count}}', '3'));
+    fireEvent.click(screen.getByRole('button', { name: ru.common.confirm }));
+    await waitFor(() => expect(api.clearTelegramOperationHistory).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it('forgets missing bindings through the confirmation dialog', async () => {
+    api.listTelegramHistoryBindings.mockResolvedValue({ items: [], total: 0 });
+    api.listTelegramMissingBindingNodes.mockResolvedValue([]);
+    api.getTelegramHistoryClearCount.mockResolvedValue(35);
+    api.forgetTelegramMissingBindings.mockResolvedValue({ deleted_count: 35 });
+    render(<TelegramHistoryDialogs overview={overview(true)} canClear={false} mutating={false} setMutating={vi.fn()} onChanged={async () => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(ru.telegram.historyMissing) }));
+    fireEvent.click(await screen.findByRole('button', { name: ru.telegram.historyForget }));
+    await screen.findByText(ru.telegram.historyForgetConfirm.replace('{{count}}', '35'));
+    fireEvent.click(screen.getByRole('button', { name: ru.common.confirm }));
+    await waitFor(() => expect(api.forgetTelegramMissingBindings).toHaveBeenCalledTimes(1));
   });
 });
