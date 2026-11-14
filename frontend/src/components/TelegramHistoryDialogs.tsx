@@ -40,7 +40,8 @@ const primaryButtonClass = 'inline-flex h-8 items-center justify-center gap-2 ro
 
 const dateText = (value: string | null | undefined) => value ? new Date(value.replace(' ', 'T')).toLocaleString() : '—';
 
-export const TelegramHistoryDialogs: React.FC<Props> = ({ overview, canClear, mutating, setMutating, onChanged }) => {
+export const TelegramHistoryDialogs: React.FC<Props> = ({ overview, canClear: canClearProp, mutating, setMutating, onChanged }) => {
+  const canClear = canClearProp || overview.can_clear === true;
   const { t } = useTranslation();
   const { toast } = useToast();
   const [section, setSection] = useState<Section | null>(null);
@@ -119,8 +120,8 @@ export const TelegramHistoryDialogs: React.FC<Props> = ({ overview, canClear, mu
       ['drift', t('telegram.historyDrift'), overview.drift.open + overview.drift.ignored + overview.drift.resolved + overview.drift.adopted, overview.drift.open],
       ['bindings', t('telegram.historyMissing'), overview.missing_bindings.missing + overview.missing_bindings.conflict, overview.missing_bindings.missing],
       ['audit', t('telegram.historyAudit'), overview.audit.total, 0],
-    ] as const).map(([key, label, count, attention]) => <button type="button" key={key} className="rounded border border-cyan-400/12 bg-[#0a0f19] px-3 py-3 text-left hover:border-cyan-300/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={() => open(key)} aria-label={`${t('telegram.historyOpenSection')}: ${label}`}>
-      <span className="block text-[12px] text-slate-400">{label}</span><span className="mt-1 block font-mono text-[20px] text-cyan-100">{count}</span><span className="text-[11px] text-amber-200">{attention > 0 ? `${attention} ${t('telegram.attentionItems')}` : t('telegram.historyClean')}</span>
+    ] as const).map(([key, label, count, attention]) => <button type="button" key={key} data-history-tile className="flex h-auto min-h-[84px] flex-col items-start justify-start gap-1 rounded border border-cyan-400/12 bg-[#0a0f19] px-3 py-3 text-left hover:border-cyan-300/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={() => open(key)} aria-label={`${t('telegram.historyOpenSection')}: ${label}`}>
+      <span className="block text-[12px] text-slate-400">{label}</span><span className="block font-mono text-[20px] leading-6 text-cyan-100">{count}</span><span className="block text-[11px] text-amber-200">{attention > 0 ? `${attention} ${t('telegram.attentionItems')}` : t('telegram.historyClean')}</span>
     </button>)}
   </div>;
 

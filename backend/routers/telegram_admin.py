@@ -560,13 +560,15 @@ def build_telegram_admin_router(
 
     @router.get("/api/v1/telegram/history/overview")
     def get_telegram_history_overview(request: Request):
-        require_admin(request)
-        return registry.history_overview()
+        username = require_admin(request)
+        role = "owner" if is_owner is not None and is_owner(username) else get_user_role(username)
+        return {**registry.history_overview(), "can_clear": "provisioning_history_clear" in capability_matrix.get(role, frozenset())}
 
     @router.get("/api/v1/telegram/history")
     def get_telegram_history(request: Request):
-        require_admin(request)
-        return registry.history_overview()
+        username = require_admin(request)
+        role = "owner" if is_owner is not None and is_owner(username) else get_user_role(username)
+        return {**registry.history_overview(), "can_clear": "provisioning_history_clear" in capability_matrix.get(role, frozenset())}
 
     @router.get("/api/v1/telegram/history/operations")
     def list_telegram_history_operations(request: Request, limit: int = 100, offset: int = 0):

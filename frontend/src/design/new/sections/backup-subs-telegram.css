@@ -68,6 +68,14 @@
   min-height: 66px;
 }
 
+/* History journal tiles show three lines of text, so they must not be squeezed to compact-button height. */
+:root[data-design="new"] [data-ln="telegram"] button[data-history-tile] {
+  height: auto;
+  min-height: 84px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
 :root[data-design="new"] [data-ln="subscriptions"] input[type="text"],
 :root[data-design="new"] [data-ln="subscriptions"] input:not([type]) {
   height: 32px;

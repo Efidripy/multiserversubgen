@@ -174,7 +174,7 @@ export type CustomerOperation = {
   attempts: CustomerOperationAttempt[];
 };
 
-export type TelegramHistoryOverview = { jobs: { total: number; terminal: number }; operations: { total: number; terminal: number; needs_attention: number }; drift: { open: number; ignored: number; resolved: number; adopted: number }; missing_bindings: { missing: number; conflict: number }; audit: { total: number } };
+export type TelegramHistoryOverview = { jobs: { total: number; terminal: number }; operations: { total: number; terminal: number; needs_attention: number }; drift: { open: number; ignored: number; resolved: number; adopted: number }; missing_bindings: { missing: number; conflict: number }; audit: { total: number }; can_clear?: boolean };
 export type TelegramHistoryBinding = { binding_id: number; customer_id: number; customer_email: string; node_id: number; node_name: string; management_state: string; desired_enabled: boolean | null };
 export type TelegramHistoryAudit = { id: number; event_type: string; actor_type: string; actor_id: string | null; entity_type: string; entity_id: string; created_at: string };
 
