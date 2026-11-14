@@ -173,6 +173,10 @@ export type CustomerOperation = {
   attempts: CustomerOperationAttempt[];
 };
 
+export type TelegramHistoryOverview = { jobs: { total: number; terminal: number }; operations: { total: number; terminal: number; needs_attention: number }; drift: { open: number; ignored: number; resolved: number; adopted: number }; missing_bindings: { missing: number; conflict: number }; audit: { total: number } };
+export type TelegramHistoryBinding = { binding_id: number; customer_id: number; customer_email: string; node_id: number; node_name: string; management_state: string; desired_enabled: boolean | null };
+export type TelegramHistoryAudit = { id: number; event_type: string; actor_type: string; actor_id: string | null; entity_type: string; entity_id: string; created_at: string };
+
 export type CustomerOperationPreview = {
   customer_id: number;
   operation_type: 'suspend' | 'resume' | 'delete' | 'suspend_node' | 'resume_node';
@@ -384,6 +388,56 @@ export async function queueBulkCustomerOperations(preview: BulkLifecyclePreview)
 export async function listDriftFindings(signal?: AbortSignal): Promise<DriftFinding[]> {
   const response = await api.get('/v1/telegram/drift', { auth: getAuth(), signal });
   return Array.isArray(response.data?.items) ? response.data.items : [];
+}
+
+export async function getTelegramHistoryOverview(signal?: AbortSignal): Promise<TelegramHistoryOverview> {
+  const response = await api.get('/v1/telegram/history/overview', { auth: getAuth(), signal });
+  return response.data as TelegramHistoryOverview;
+}
+
+export async function listTelegramHistoryOperations(limit = 25, offset = 0, signal?: AbortSignal): Promise<{ items: CustomerOperation[]; total: number }> {
+  const response = await api.get('/v1/telegram/history/operations', { auth: getAuth(), signal, params: { limit, offset } });
+  return { items: Array.isArray(response.data?.items) ? response.data.items as CustomerOperation[] : [], total: Number(response.data?.total) || 0 };
+}
+
+export async function listTelegramHistoryDrift(status = 'all', limit = 100, offset = 0, signal?: AbortSignal): Promise<DriftFinding[]> {
+  const response = await api.get('/v1/telegram/history/drift', { auth: getAuth(), signal, params: { status, limit, offset } });
+  return Array.isArray(response.data?.items) ? response.data.items as DriftFinding[] : [];
+}
+
+export async function listTelegramHistoryBindings(managementState?: 'missing' | 'conflict', limit = 25, offset = 0, signal?: AbortSignal): Promise<{ items: TelegramHistoryBinding[]; total: number }> {
+  const response = await api.get('/v1/telegram/history/bindings', { auth: getAuth(), signal, params: { management_state: managementState, limit, offset } });
+  return { items: Array.isArray(response.data?.items) ? response.data.items as TelegramHistoryBinding[] : [], total: Number(response.data?.total) || 0 };
+}
+
+export async function listTelegramHistoryAudit(limit = 25, offset = 0, signal?: AbortSignal): Promise<{ items: TelegramHistoryAudit[]; total: number }> {
+  const response = await api.get('/v1/telegram/history/audit', { auth: getAuth(), signal, params: { limit, offset } });
+  return { items: Array.isArray(response.data?.items) ? response.data.items as TelegramHistoryAudit[] : [], total: Number(response.data?.total) || 0 };
+}
+
+export async function getTelegramHistoryClearCount(section: 'jobs' | 'operations' | 'drift' | 'bindings', nodeId?: number): Promise<number> {
+  const response = await api.get('/v1/telegram/history/clear-count', { auth: getAuth(), params: { section, node_id: nodeId } });
+  return Number(response.data?.deleted_count) || 0;
+}
+
+export async function listTelegramMissingBindingNodes(): Promise<Array<{ node_id: number; node_name: string }>> {
+  const response = await api.get('/v1/telegram/history/binding-nodes', { auth: getAuth() });
+  return Array.isArray(response.data?.items) ? response.data.items : [];
+}
+
+export async function clearTelegramOperationHistory(): Promise<number> {
+  const response = await api.post('/v1/telegram/history/operations/clear', { idempotency_key: newIdempotencyKey() }, { auth: getAuth() });
+  return Number(response.data?.deleted_count) || 0;
+}
+
+export async function clearTelegramDriftHistory(): Promise<number> {
+  const response = await api.post('/v1/telegram/history/drift/clear', { idempotency_key: newIdempotencyKey() }, { auth: getAuth() });
+  return Number(response.data?.deleted_count) || 0;
+}
+
+export async function forgetTelegramMissingBindings(nodeId?: number): Promise<number> {
+  const response = await api.post('/v1/telegram/history/bindings/forget', { node_id: nodeId ?? null, idempotency_key: newIdempotencyKey() }, { auth: getAuth() });
+  return Number(response.data?.forgotten) || 0;
 }
 
 export async function scanDrift(): Promise<void> {

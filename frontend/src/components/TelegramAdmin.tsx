@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useToast } from './Toast';
 import { cacheService } from '../services/cacheService';
 import { UIIcon } from './UIIcon';
+import TelegramHistoryDialogs from './TelegramHistoryDialogs';
 import {
   approveTelegramRequest,
   blockTelegramRequest,
@@ -31,6 +32,7 @@ import {
   getCustomerTimeline,
   getTelegramDashboard,
   getTelegramAttention,
+  getTelegramHistoryOverview,
   getTelegramBotConfiguration,
   getTelegramTransport,
   clearTelegramJobHistory,
@@ -54,6 +56,7 @@ import {
   TelegramSupportRequest,
   TelegramBotConfigurationStatus,
   ProvisioningJob,
+  TelegramHistoryOverview,
   TelegramRequest,
   TelegramTransportStatus,
   setTelegramTransport,
@@ -174,6 +177,7 @@ export const TelegramAdmin: React.FC = () => {
   const [repairResult, setRepairResult] = useState<{ customerId: number; result: CustomerRepairResult } | null>(null);
   const [nodes, setNodes] = useState<CustomerNode[]>([]);
   const [operations, setOperations] = useState<CustomerOperation[]>([]);
+  const [historyOverview, setHistoryOverview] = useState<TelegramHistoryOverview | null>(null);
   const [traffic, setTraffic] = useState<CustomerTraffic | null>(null);
   const [tags, setTags] = useState<CustomerTag[]>([]);
   const [tagInput, setTagInput] = useState('');
@@ -375,14 +379,16 @@ export const TelegramAdmin: React.FC = () => {
 
   const loadOperations = useCallback(async () => {
     await runDomainRead('operations',
-      async (signal) => Promise.all([listTelegramJobsPage(5, 0, signal), getTelegramDashboard(signal), listLifecycleSchedules(undefined, signal), listDriftFindings(signal), getTelegramAttention(signal)]),
-      ([nextJobsPage, nextDashboard, nextSchedules, nextDrift, nextAttention]) => {
+      async (signal) => Promise.all([listTelegramJobsPage(5, 0, signal), getTelegramDashboard(signal), listLifecycleSchedules(undefined, signal), listDriftFindings(signal), getTelegramAttention(signal), getTelegramHistoryOverview(signal)]),
+      ([nextJobsPage, nextDashboard, nextSchedules, nextDrift, nextAttention, nextHistory]) => {
         setAttention(nextAttention);
         setJobs(nextJobsPage.items);
         setJobsTotal(nextJobsPage.total);
+        setCanClearJobHistory(nextJobsPage.can_clear_history);
         setDashboard(nextDashboard);
         setSchedules(nextSchedules);
         setDriftFindings(nextDrift);
+        setHistoryOverview(nextHistory);
       },
     );
   }, [runDomainRead]);
@@ -965,6 +971,10 @@ export const TelegramAdmin: React.FC = () => {
 
       {activeTab === 'operations' && !domainStates.operations.ready && <section className={`${panelClass} mb-4`} aria-live="polite">{renderDomainState('operations')}</section>}
       {activeTab === 'settings' && !domainStates.settings.ready && <section className={`${panelClass} mb-4`} aria-live="polite">{renderDomainState('settings')}</section>}
+      {activeTab === 'operations' && domainStates.operations.ready && historyOverview && <section className={`${panelClass} mb-4`} aria-label={t('telegram.historyTitle')}>
+        <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-[13px] font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.historyTitle')}</h3></div>
+        <TelegramHistoryDialogs overview={historyOverview} canClear={canClearJobHistory} mutating={mutating} setMutating={setMutating} onChanged={async () => { await Promise.all([loadOperations(), loadJobHistory(1)]); }} />
+      </section>}
       {activeTab === 'operations' && domainStates.operations.ready && dashboard && <div className="mb-4 grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
         <section className={panelClass} aria-label={t('telegram.jobsTitle')}>
           <div className="flex items-center justify-between gap-3 border-b border-cyan-400/12 pb-3"><div><h3 className="text-[13px] font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.jobsTitle')}</h3><p className="mt-1 text-[12px] text-slate-500">{t('telegram.operations')}</p></div><div className="flex items-center gap-2"><span className="rounded-full bg-[#151d2a] px-2 py-1 font-mono text-[12px] text-cyan-100">{jobsTotal}</span><button type="button" className={buttonClass} disabled={domainStates.operations.loading || domainStates.jobHistory.loading || mutating} onClick={openJobHistory}>{t('telegram.jobsHistory')}</button></div></div>
