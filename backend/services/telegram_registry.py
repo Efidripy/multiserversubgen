@@ -5940,6 +5940,15 @@ class TelegramRegistry:
             ).fetchall()]
             return [self._get_customer_operation_from_conn(conn, item) for item in ids], total
 
+    def dismissed_operation_ids(self, operation_ids: list[int]) -> set[int]:
+        ids = [int(item) for item in operation_ids]
+        if not ids:
+            return set()
+        with connect(self._db_path) as conn:
+            marks = ",".join("?" for _ in ids)
+            rows = conn.execute(f"SELECT id FROM telegram_customer_operations WHERE dismissed_at IS NOT NULL AND id IN ({marks})", ids).fetchall()
+        return {int(row[0]) for row in rows}
+
     def list_bindings_page(self, *, management_state: str | None = None, limit: int = 100, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
         if management_state not in (None, "missing", "conflict"):
             raise TelegramRegistryError("binding state is invalid")

@@ -573,7 +573,8 @@ def build_telegram_admin_router(
         require_admin(request)
         try:
             items, total = registry.list_customer_operations_page(limit=limit, offset=offset)
-            return {"items": [asdict(item) for item in items], "total": total}
+            dismissed = registry.dismissed_operation_ids([item.operation_id for item in items])
+            return {"items": [{**asdict(item), "dismissed": item.operation_id in dismissed} for item in items], "total": total}
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
 

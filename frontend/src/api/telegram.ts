@@ -162,6 +162,7 @@ export type CustomerOperationAttempt = {
 
 export type CustomerOperation = {
   operation_id: number;
+  dismissed?: boolean;
   customer_id: number;
   customer_email: string;
   operation_type: string;

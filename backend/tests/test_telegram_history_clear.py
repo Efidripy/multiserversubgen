@@ -236,3 +236,17 @@ def test_suspend_operation_still_referenced_by_a_binding_survives_retention_and_
     registry.run_history_retention()
     with connect(path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM telegram_customer_operations WHERE id=?", (op_id,)).fetchone()[0] == 0
+
+
+def test_history_operations_endpoint_marks_dismissed_operations(tmp_path):
+    registry, path = _registry(tmp_path)
+    customer = registry.create_customer(email_display="dismiss-user", origin="manual", email_source="admin", public_code="dismiss-code")
+    with connect(path) as conn:
+        for key, dismissed in (("a", "NULL"), ("b", "CURRENT_TIMESTAMP")):
+            conn.execute(
+                f"INSERT INTO telegram_customer_operations(customer_id, operation_type, status, target_snapshot_digest, expected_customer_version, idempotency_key, created_by, dismissed_at) VALUES (?, 'suspend_node', 'partial', 'digest', 1, ?, 'test', {dismissed})",
+                (customer, key),
+            )
+        ids = {row[0]: row[1] for row in conn.execute("SELECT idempotency_key, id FROM telegram_customer_operations").fetchall()}
+    assert registry.dismissed_operation_ids(list(ids.values())) == {ids["b"]}
+    assert registry.dismissed_operation_ids([]) == set()
