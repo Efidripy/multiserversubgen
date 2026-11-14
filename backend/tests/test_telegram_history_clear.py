@@ -197,3 +197,17 @@ def test_missing_count_excludes_busy_binding(tmp_path):
     assert registry.forget_all_missing_bindings(node_id=1, actor="admin", idempotency_key="busy") == {"forgotten": 0, "busy": 1}
     with connect(path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 1
+
+
+def test_ignored_orphan_remote_is_kept_by_retention_and_clear(monkeypatch, tmp_path):
+    monkeypatch.setenv("TELEGRAM_HISTORY_RETENTION_DAYS", "0")
+    monkeypatch.setenv("TELEGRAM_AUDIT_RETENTION_DAYS", "0")
+    registry, path = _registry(tmp_path)
+    customer = registry.create_customer(email_display="orphan-user", origin="manual", email_source="admin", public_code="orphan-code")
+    with connect(path) as conn:
+        conn.execute("INSERT INTO telegram_drift_findings(finding_key,kind,customer_id,node_id,remote_email,remote_client_id,remote_sub_id,status) VALUES ('orphan','orphan_remote',?,1,'orphan-user','remote','','ignored')", (customer,))
+    registry.run_history_retention()
+    assert registry.history_clear_count("drift") == 0
+    registry.clear_drift_history(idempotency_key="orphan-clear-1", cleared_by="admin")
+    with connect(path) as conn:
+        assert conn.execute("SELECT status FROM telegram_drift_findings WHERE finding_key='orphan'").fetchone()[0] == "ignored"

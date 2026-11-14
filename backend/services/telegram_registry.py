@@ -5914,7 +5914,7 @@ class TelegramRegistry:
         queries = {
             "jobs": "SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE status IN ('succeeded','failed','cancelled')",
             "operations": "SELECT COUNT(*) FROM telegram_customer_operations WHERE (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id)",
-            "drift": "SELECT COUNT(*) FROM telegram_drift_findings WHERE status IN ('resolved','adopted') OR (status='ignored' AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict')))",
+            "drift": "SELECT COUNT(*) FROM telegram_drift_findings WHERE status IN ('resolved','adopted') OR (status='ignored' AND kind IN ('binding_missing','binding_conflict') AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict')))",
             "bindings": "SELECT COUNT(*) FROM customer_node_bindings b WHERE b.management_state='missing' AND (? IS NULL OR b.node_id=?) AND NOT EXISTS (SELECT 1 FROM telegram_customer_operation_attempts a JOIN telegram_customer_operations o ON o.id=a.operation_id WHERE a.binding_id=b.id AND o.status IN ('queued','running','partial') AND o.dismissed_at IS NULL)",
         }
         if section not in queries or (node_id is not None and section != "bindings"):
@@ -5991,7 +5991,7 @@ class TelegramRegistry:
                 if str(receipt[0]) != digest:
                     raise IdempotencyConflictError("idempotency key was already used for another command")
                 return int(json.loads(str(receipt[1]))["deleted_count"])
-            deleted = conn.execute("DELETE FROM telegram_drift_findings WHERE status IN ('resolved','adopted') OR (status='ignored' AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict')))" ).rowcount
+            deleted = conn.execute("DELETE FROM telegram_drift_findings WHERE status IN ('resolved','adopted') OR (status='ignored' AND kind IN ('binding_missing','binding_conflict') AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict')))" ).rowcount
             conn.execute("INSERT INTO telegram_command_receipts(scope,idempotency_key,payload_digest,result_json) VALUES('drift_history_clear',?,?,?)", (key, digest, json.dumps({"deleted_count": deleted}, separators=(",", ":"))))
             conn.execute("INSERT INTO telegram_audit_log(event_type,actor_type,actor_id,entity_type,entity_id,payload_digest) VALUES('drift_history_cleared','admin',?,'drift_history','terminal',?)", (actor, digest))
         return int(deleted)
@@ -6029,7 +6029,7 @@ class TelegramRegistry:
             finding = conn.execute("DELETE FROM telegram_drift_findings WHERE status IN ('resolved','adopted') AND COALESCE(resolved_at,last_seen_at) < datetime('now', ?)", params).rowcount if days else 0
             jobs = conn.execute("DELETE FROM telegram_provisioning_jobs WHERE status IN ('succeeded','failed','cancelled') AND finished_at IS NOT NULL AND finished_at < datetime('now', ?)", params).rowcount if days else 0
             audit = conn.execute("DELETE FROM telegram_audit_log WHERE created_at < datetime('now', ?)", (f"-{audit_days} days",)).rowcount if audit_days else 0
-            conn.execute("UPDATE telegram_drift_findings SET status='resolved', resolved_at=CURRENT_TIMESTAMP, row_version=row_version+1 WHERE status='ignored' AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict'))")
+            conn.execute("UPDATE telegram_drift_findings SET status='resolved', resolved_at=CURRENT_TIMESTAMP, row_version=row_version+1 WHERE status='ignored' AND kind IN ('binding_missing','binding_conflict') AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict'))")
         return {"operations": int(op), "findings": int(finding), "jobs": int(jobs), "audit": int(audit)}
 
     def get_provisioning_job(self, job_id: int) -> ProvisioningJobStatus:
