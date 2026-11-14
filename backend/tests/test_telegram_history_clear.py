@@ -321,3 +321,19 @@ def test_cancelled_job_holding_latest_succeeded_attempt_is_kept(monkeypatch, tmp
     assert registry.history_clear_count("jobs") == 0
     with connect(path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE id=?", (job,)).fetchone()[0] == 1
+
+
+def test_history_overview_tells_the_ui_whether_clearing_is_allowed(tmp_path):
+    registry, path = _registry(tmp_path)
+
+    def client_for(owner: bool) -> TestClient:
+        app = FastAPI()
+        app.include_router(build_telegram_admin_router(
+            check_auth=lambda request: "admin", get_user_role=lambda username: "admin",
+            db_path=path, list_nodes=lambda: [], get_cached_inbound_options=lambda nodes: [],
+            client_mgr=None, is_owner=lambda username: owner,
+        ))
+        return TestClient(app)
+
+    assert client_for(False).get("/api/v1/telegram/history/overview").json()["can_clear"] is False
+    assert client_for(True).get("/api/v1/telegram/history/overview").json()["can_clear"] is True
