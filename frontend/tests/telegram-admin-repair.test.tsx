@@ -5,7 +5,7 @@ import ru from '../src/i18n/locales/ru.json';
 const api = vi.hoisted(() => ({
   listTelegramCustomers: vi.fn(), listTelegramJobsPage: vi.fn(), getCustomerNodes: vi.fn(),
   getCustomerOperations: vi.fn(), getCustomerTraffic: vi.fn(), getCustomerTags: vi.fn(),
-  getCustomerTimeline: vi.fn(), repairCustomer: vi.fn(), getTelegramAttention: vi.fn(),
+  getCustomerTimeline: vi.fn(), repairCustomer: vi.fn(), getTelegramAttention: vi.fn(), getTelegramHistoryOverview: vi.fn(),
   getTelegramDashboard: vi.fn(), listLifecycleSchedules: vi.fn(), listDriftFindings: vi.fn(),
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values: Record<string, string> = {}) => {
@@ -26,6 +26,7 @@ beforeEach(() => {
   api.getCustomerTraffic.mockResolvedValue(null); api.getCustomerTags.mockResolvedValue([]); api.getCustomerTimeline.mockResolvedValue([]);
   api.getTelegramDashboard.mockResolvedValue({}); api.listLifecycleSchedules.mockResolvedValue([]); api.listDriftFindings.mockResolvedValue([]);
   api.getTelegramAttention.mockResolvedValue({ provisioning: [], lifecycle: [] });
+  api.getTelegramHistoryOverview.mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 

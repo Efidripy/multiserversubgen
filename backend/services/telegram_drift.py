@@ -10,6 +10,7 @@ an already-present remote record without a local binding is reported.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Callable
@@ -38,6 +39,13 @@ class TelegramDriftScanner:
             os.getenv("TELEGRAM_DRIFT_AUTO_SYNC", "1").strip().lower() in ("1", "true", "yes", "on")
             if auto_sync is None else auto_sync
         )
+        self._last_retention_at = 0.0
+
+    def _rotate_history_if_due(self) -> None:
+        if time.monotonic() - self._last_retention_at < 86400:
+            return
+        self._registry.run_history_retention()
+        self._last_retention_at = time.monotonic()
 
     @staticmethod
     def _inbound_one_rows(rows: object) -> list[dict[str, Any]]:
@@ -74,6 +82,7 @@ class TelegramDriftScanner:
             # Refresh and node reconcile run this path: they must adopt/forget exactly like the scheduled scan.
             if self._auto_sync and result.scanned_node_ids:
                 self._auto_sync_findings(result.scanned_node_ids)
+            self._rotate_history_if_due()
             return result
 
     def scan_if_idle(self) -> tuple[DriftScanResult, int] | None:
@@ -88,6 +97,7 @@ class TelegramDriftScanner:
             result = self._scan()
             if self._auto_sync and result.scanned_node_ids:
                 self._auto_sync_findings(result.scanned_node_ids)
+            self._rotate_history_if_due()
             with connect(self._registry.database_path) as conn:
                 current = {row[0] for row in conn.execute(
                     "SELECT id FROM telegram_drift_findings WHERE status = 'open'"

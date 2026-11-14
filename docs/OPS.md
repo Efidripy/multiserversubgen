@@ -349,3 +349,7 @@ Review the warning and restore a suitable backup when history is needed.
 - Lock order for writers that touch both databases: admin.db (main) first, then the attached metrics database. `BEGIN IMMEDIATE` already follows it; do not write metrics before main in one transaction.
 
 `TELEGRAM_DRIFT_AUTO_SYNC` defaults to `1`; set it to `0` to disable automatic binding updates after two consecutive scans.
+
+### Telegram history retention
+
+The drift scan performs a short daily rotation after the scan transaction. `TELEGRAM_HISTORY_RETENTION_DAYS` controls completed Telegram operations and drift findings (default `60`; set `0` to disable). `TELEGRAM_AUDIT_RETENTION_DAYS` controls old `telegram_audit_log` rows (default `365`; set `0` to keep them). The rotation takes the SQLite admin transaction first and does not hold node or metrics locks.
