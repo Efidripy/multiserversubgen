@@ -250,3 +250,27 @@ def test_history_operations_endpoint_marks_dismissed_operations(tmp_path):
         ids = {row[0]: row[1] for row in conn.execute("SELECT idempotency_key, id FROM telegram_customer_operations").fetchall()}
     assert registry.dismissed_operation_ids(list(ids.values())) == {ids["b"]}
     assert registry.dismissed_operation_ids([]) == set()
+
+
+def test_latest_expiry_provisioning_job_survives_retention_and_clear(monkeypatch, tmp_path):
+    monkeypatch.setenv("TELEGRAM_HISTORY_RETENTION_DAYS", "30")
+    monkeypatch.setenv("TELEGRAM_AUDIT_RETENTION_DAYS", "0")
+    registry, path = _registry(tmp_path)
+    customer = registry.create_customer(email_display="expiry-user", origin="manual", email_source="admin", public_code="expiry-code")
+    job_ids = []
+    with connect(path) as conn:
+        for key in ("older", "latest"):
+            job = conn.execute(
+                "INSERT INTO telegram_provisioning_jobs(customer_id,trigger,idempotency_key,status,policy_snapshot_digest,created_by,finished_at) VALUES (?,'manual_sync',?,'succeeded','digest','test',datetime('now','-400 days'))",
+                (customer, key),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO telegram_provisioning_attempts(job_id,node_id,status,desired_client_id,desired_sub_id,desired_expiry_time,policy_version) VALUES (?,1,'succeeded','client','sub',4102444800000,1)",
+                (job,),
+            )
+            job_ids.append(job)
+    registry.run_history_retention()
+    assert registry.history_clear_count("jobs") == 0
+    with connect(path) as conn:
+        left = [row[0] for row in conn.execute("SELECT id FROM telegram_provisioning_jobs ORDER BY id").fetchall()]
+    assert left == [job_ids[1]]
