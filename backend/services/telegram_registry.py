@@ -5885,9 +5885,10 @@ class TelegramRegistry:
             def count(sql: str, args: tuple[Any, ...] = ()) -> int:
                 row = conn.execute(sql, args).fetchone()
                 return int(row[0]) if row else 0
-            return {
+            overview = {
                 "jobs": {
                     "total": count("SELECT COUNT(*) FROM telegram_provisioning_jobs"),
+                    "needs_attention": count("SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE status IN ('partial','failed')"),
                     "terminal": count("SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE status IN ('succeeded','failed','cancelled')"),
                 },
                 "operations": {
@@ -5907,6 +5908,10 @@ class TelegramRegistry:
                 },
                 "audit": {"total": count("SELECT COUNT(*) FROM telegram_audit_log")},
             }
+        # Rows other features still read are kept by "clear"; tell the UI how many it can really remove.
+        for section in ("jobs", "operations", "drift"):
+            overview[section]["clearable"] = self.history_clear_count(section)
+        return overview
 
     def history_clear_count(self, section: str, node_id: int | None = None) -> int:
         if node_id is not None:

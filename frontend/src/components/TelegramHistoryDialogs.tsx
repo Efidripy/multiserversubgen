@@ -115,17 +115,20 @@ export const TelegramHistoryDialogs: React.FC<Props> = ({ overview, canClear: ca
 
   if (!section) return <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
     {([
-      ['jobs', t('telegram.historyJobs'), overview.jobs.total, overview.jobs.terminal],
+      ['jobs', t('telegram.historyJobs'), overview.jobs.total, overview.jobs.needs_attention ?? 0],
       ['operations', t('telegram.historyOperations'), overview.operations.total, overview.operations.needs_attention],
       ['drift', t('telegram.historyDrift'), overview.drift.open + overview.drift.ignored + overview.drift.resolved + overview.drift.adopted, overview.drift.open],
       ['bindings', t('telegram.historyMissing'), overview.missing_bindings.missing + overview.missing_bindings.conflict, overview.missing_bindings.missing],
       ['audit', t('telegram.historyAudit'), overview.audit.total, 0],
     ] as const).map(([key, label, count, attention]) => <button type="button" key={key} data-history-tile className="flex h-auto min-h-[84px] flex-col items-start justify-start gap-1 rounded border border-cyan-400/12 bg-[#0a0f19] px-3 py-3 text-left hover:border-cyan-300/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={() => open(key)} aria-label={`${t('telegram.historyOpenSection')}: ${label}`}>
-      <span className="block text-[12px] text-slate-400">{label}</span><span className="block font-mono text-[20px] leading-6 text-cyan-100">{count}</span><span className="block text-[11px] text-amber-200">{attention > 0 ? `${attention} ${t('telegram.attentionItems')}` : t('telegram.historyClean')}</span>
+      <span className="block text-[12px] text-slate-400">{label}</span><span className="block font-mono text-[20px] leading-6 text-cyan-100">{count}</span><span className="block text-[11px] text-amber-200">{attention > 0 ? t('telegram.historyNeedsAttention', { count: attention }) : t('telegram.historyClean')}</span>
     </button>)}
   </div>;
 
   const title = section === 'jobs' ? t('telegram.historyJobs') : section === 'operations' ? t('telegram.historyOperations') : section === 'drift' ? t('telegram.historyDrift') : section === 'bindings' ? t('telegram.historyMissing') : t('telegram.historyAudit');
+  const driftTotal = overview.drift.open + overview.drift.ignored + overview.drift.resolved + overview.drift.adopted;
+  const clearable = section === 'jobs' || section === 'operations' || section === 'drift' ? overview[section].clearable : undefined;
+  const sectionTotal = section === 'jobs' ? overview.jobs.total : section === 'operations' ? overview.operations.total : driftTotal;
   return <>
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#02050bd9] p-3 sm:p-5" onMouseDown={() => { if (!confirm && !mutating) setSection(null); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="telegram-history-dialog-title" className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[8px] border border-cyan-400/20 bg-[#0d131f] shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
@@ -133,6 +136,7 @@ export const TelegramHistoryDialogs: React.FC<Props> = ({ overview, canClear: ca
         <div className="flex flex-wrap items-center gap-2 border-b border-cyan-400/12 px-4 py-3">
           {section === 'drift' && <label className="flex items-center gap-2 text-[11px] text-slate-400">{t('telegram.historyFilterStatus')}<select className="rounded border border-cyan-400/20 bg-[#0a0f19] px-2 py-1.5 text-slate-200" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value="all">{t('telegram.historyAllStatuses')}</option>{['open', 'ignored', 'resolved', 'adopted'].map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
           {section === 'bindings' && <label className="flex items-center gap-2 text-[11px] text-slate-400">{t('telegram.historyForgetNode')}<select className="rounded border border-cyan-400/20 bg-[#0a0f19] px-2 py-1.5 text-slate-200" value={nodeId ?? ''} onChange={(event) => setNodeId(event.target.value ? Number(event.target.value) : undefined)}><option value="">{t('telegram.historyAllNodes')}</option>{nodeOptions.map(({ node_id, node_name }) => <option key={node_id} value={node_id}>{node_name}</option>)}</select></label>}
+          {clearable !== undefined && <p className="min-w-0 flex-1 text-[12px] leading-5 text-slate-400">{t('telegram.historyClearable', { count: clearable, total: sectionTotal })}{clearable < sectionTotal && ` ${t('telegram.historyKeptHint')}`}</p>}
           {section !== 'audit' && <button type="button" className={`${buttonClass} ml-auto border-rose-400/25 text-rose-200`} disabled={!canClear || mutating} onClick={() => void clearSection()}>{section === 'bindings' ? t('telegram.historyForget') : t('telegram.historyClear')}</button>}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">{loading && <p className="py-7 text-center text-[14px] font-light text-slate-500">{t('telegram.historyLoading')}</p>}{!loading && ((section === 'jobs' && jobs.length === 0) || (section === 'operations' && operations.length === 0) || (section === 'drift' && drift.length === 0) || (section === 'bindings' && bindings.length === 0) || (section === 'audit' && audit.length === 0)) && <p className="py-7 text-center text-[14px] font-light text-slate-500">{t('telegram.historyNoRecords')}</p>}

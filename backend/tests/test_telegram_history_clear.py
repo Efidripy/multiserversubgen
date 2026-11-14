@@ -41,6 +41,9 @@ def test_history_overview_reports_sections(tmp_path):
     overview = registry.history_overview()
     assert set(overview) == {"jobs", "operations", "drift", "missing_bindings", "audit"}
     assert overview["operations"]["needs_attention"] == 0
+    assert overview["jobs"]["needs_attention"] == 0
+    for section in ("jobs", "operations", "drift"):
+        assert overview[section]["clearable"] == registry.history_clear_count(section)
 
 
 def test_history_retention_removes_only_old_safe_rows(monkeypatch, tmp_path):

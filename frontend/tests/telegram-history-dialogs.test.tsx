@@ -16,7 +16,7 @@ import { TelegramHistoryDialogs } from '../src/components/TelegramHistoryDialogs
 import type { TelegramHistoryOverview } from '../src/api/telegram';
 
 const overview = (canClear: boolean): TelegramHistoryOverview => ({
-  jobs: { total: 1, terminal: 1 }, operations: { total: 2, terminal: 1, needs_attention: 0 },
+  jobs: { total: 1, terminal: 1, needs_attention: 0, clearable: 0 }, operations: { total: 8, terminal: 8, needs_attention: 0, clearable: 0 },
   drift: { open: 0, ignored: 0, resolved: 0, adopted: 0 }, missing_bindings: { missing: 1, conflict: 0 },
   audit: { total: 3 }, can_clear: canClear,
 });
@@ -75,5 +75,14 @@ describe('TelegramHistoryDialogs clear actions', () => {
     await screen.findByText(ru.telegram.historyForgetConfirm.replace('{{count}}', '35'));
     fireEvent.click(screen.getByRole('button', { name: ru.common.confirm }));
     await waitFor(() => expect(api.forgetTelegramMissingBindings).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows succeeded jobs as clean and explains kept rows in a section', async () => {
+    renderDialogs(true);
+    const tile = screen.getByRole('button', { name: new RegExp(ru.telegram.historyJobs) });
+    expect(tile.textContent).toContain(ru.telegram.historyClean);
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(ru.telegram.historyOperations) }));
+    await screen.findByText(new RegExp(ru.telegram.historyKeptHint));
+    expect(screen.getByText(new RegExp(ru.telegram.historyClearable.replace('{{count}}', '0').replace('{{total}}', '8')))).toBeTruthy();
   });
 });
