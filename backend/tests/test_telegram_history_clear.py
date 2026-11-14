@@ -72,13 +72,13 @@ def test_history_retention_removes_only_old_safe_rows(monkeypatch, tmp_path):
     result = registry.run_history_retention()
     assert result["operations"] == 1
     assert result["findings"] == 2
-    assert result["jobs"] == 2
+    assert result["jobs"] == 1
     assert result["audit"] == 1
     with connect(path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM telegram_customer_operation_attempts").fetchone()[0] == 0
         assert {row[0] for row in conn.execute("SELECT status FROM telegram_customer_operations")} == {"succeeded", "partial", "failed", "queued", "running"}
         assert {row[0] for row in conn.execute("SELECT status FROM telegram_drift_findings")} == {"open"}
-        assert {row[0] for row in conn.execute("SELECT idempotency_key FROM telegram_provisioning_jobs")} == {"job-young"}
+        assert {row[0] for row in conn.execute("SELECT idempotency_key FROM telegram_provisioning_jobs")} == {"job-young", "job-failed"}
         assert conn.execute("SELECT COUNT(*) FROM telegram_audit_log").fetchone()[0] == 1
 
 
@@ -274,3 +274,27 @@ def test_latest_expiry_provisioning_job_survives_retention_and_clear(monkeypatch
     with connect(path) as conn:
         left = [row[0] for row in conn.execute("SELECT id FROM telegram_provisioning_jobs ORDER BY id").fetchall()]
     assert left == [job_ids[1]]
+
+
+def test_retention_keeps_finite_quota_snapshot_and_failed_jobs(monkeypatch, tmp_path):
+    monkeypatch.setenv("TELEGRAM_HISTORY_RETENTION_DAYS", "30")
+    monkeypatch.setenv("TELEGRAM_AUDIT_RETENTION_DAYS", "0")
+    registry, path = _registry(tmp_path)
+    customer = registry.create_customer(email_display="quota-user", origin="manual", email_source="admin", public_code="quota-code")
+    with connect(path) as conn:
+        quota_job = conn.execute(
+            "INSERT INTO telegram_provisioning_jobs(customer_id,trigger,idempotency_key,status,policy_snapshot_digest,created_by,finished_at) VALUES (?,'manual_sync','quota','succeeded','digest','test',datetime('now','-400 days'))",
+            (customer,),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO telegram_provisioning_attempts(job_id,node_id,status,desired_client_id,desired_sub_id,desired_expiry_time,desired_total_bytes,policy_version,remote_client_id) VALUES (?,1,'succeeded','client','sub',0,1073741824,1,'remote')",
+            (quota_job,),
+        )
+        failed_job = conn.execute(
+            "INSERT INTO telegram_provisioning_jobs(customer_id,trigger,idempotency_key,status,policy_snapshot_digest,created_by,finished_at) VALUES (?,'approve_new','failed','failed','digest','test',datetime('now','-400 days'))",
+            (customer,),
+        ).lastrowid
+    registry.run_history_retention()
+    with connect(path) as conn:
+        left = {row[0] for row in conn.execute("SELECT id FROM telegram_provisioning_jobs").fetchall()}
+    assert left == {quota_job, failed_job}
