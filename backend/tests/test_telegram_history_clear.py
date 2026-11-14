@@ -211,3 +211,28 @@ def test_ignored_orphan_remote_is_kept_by_retention_and_clear(monkeypatch, tmp_p
     registry.clear_drift_history(idempotency_key="orphan-clear-1", cleared_by="admin")
     with connect(path) as conn:
         assert conn.execute("SELECT status FROM telegram_drift_findings WHERE finding_key='orphan'").fetchone()[0] == "ignored"
+
+
+def test_suspend_operation_still_referenced_by_a_binding_survives_retention_and_clear(monkeypatch, tmp_path):
+    monkeypatch.setenv("TELEGRAM_HISTORY_RETENTION_DAYS", "30")
+    monkeypatch.setenv("TELEGRAM_AUDIT_RETENTION_DAYS", "0")
+    registry, path = _registry(tmp_path)
+    customer = registry.create_customer(email_display="suspended-user", origin="manual", email_source="admin", public_code="suspended-code")
+    with connect(path) as conn:
+        op_id = conn.execute(
+            "INSERT INTO telegram_customer_operations(customer_id, operation_type, status, target_snapshot_digest, expected_customer_version, idempotency_key, created_by, finished_at) VALUES (?, 'suspend', 'succeeded', 'digest', 1, 'old-suspend', 'test', datetime('now','-400 days'))",
+            (customer,),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO customer_node_bindings(customer_id, node_id, remote_client_id, remote_sub_id, remote_email, source, management_state, desired_enabled, suspended_by_operation_id) VALUES (?, 1, 'remote', '', 'suspended-user', 'admin_confirmed', 'confirmed', 0, ?)",
+            (customer, op_id),
+        )
+    registry.run_history_retention()
+    assert registry.history_clear_count("operations") == 0
+    registry.clear_customer_operation_history(idempotency_key="suspended-clear-1", cleared_by="admin")
+    with connect(path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_customer_operations WHERE id=?", (op_id,)).fetchone()[0] == 1
+        conn.execute("UPDATE customer_node_bindings SET suspended_by_operation_id=NULL, desired_enabled=1")
+    registry.run_history_retention()
+    with connect(path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_customer_operations WHERE id=?", (op_id,)).fetchone()[0] == 0

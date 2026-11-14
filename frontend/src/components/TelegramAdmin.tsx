@@ -379,7 +379,7 @@ export const TelegramAdmin: React.FC = () => {
 
   const loadOperations = useCallback(async () => {
     await runDomainRead('operations',
-      async (signal) => Promise.all([listTelegramJobsPage(5, 0, signal), getTelegramDashboard(signal), listLifecycleSchedules(undefined, signal), listDriftFindings(signal), getTelegramAttention(signal), getTelegramHistoryOverview(signal)]),
+      async (signal) => Promise.all([listTelegramJobsPage(5, 0, signal), getTelegramDashboard(signal), listLifecycleSchedules(undefined, signal), listDriftFindings(signal), getTelegramAttention(signal), getTelegramHistoryOverview(signal).catch(() => null)]),
       ([nextJobsPage, nextDashboard, nextSchedules, nextDrift, nextAttention, nextHistory]) => {
         setAttention(nextAttention);
         setJobs(nextJobsPage.items);

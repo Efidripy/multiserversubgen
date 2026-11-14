@@ -5913,7 +5913,7 @@ class TelegramRegistry:
             node_id = _positive_int(node_id, "node_id")
         queries = {
             "jobs": "SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE status IN ('succeeded','failed','cancelled')",
-            "operations": "SELECT COUNT(*) FROM telegram_customer_operations WHERE (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id)",
+            "operations": "SELECT COUNT(*) FROM telegram_customer_operations WHERE (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id) AND NOT EXISTS (SELECT 1 FROM customer_node_bindings sb WHERE sb.suspended_by_operation_id=telegram_customer_operations.id)",
             "drift": "SELECT COUNT(*) FROM telegram_drift_findings WHERE status IN ('resolved','adopted') OR (status='ignored' AND kind IN ('binding_missing','binding_conflict') AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict')))",
             "bindings": "SELECT COUNT(*) FROM customer_node_bindings b WHERE b.management_state='missing' AND (? IS NULL OR b.node_id=?) AND NOT EXISTS (SELECT 1 FROM telegram_customer_operation_attempts a JOIN telegram_customer_operations o ON o.id=a.operation_id WHERE a.binding_id=b.id AND o.status IN ('queued','running','partial') AND o.dismissed_at IS NULL)",
         }
@@ -5973,7 +5973,7 @@ class TelegramRegistry:
                 if str(receipt[0]) != digest:
                     raise IdempotencyConflictError("idempotency key was already used for another command")
                 return int(json.loads(str(receipt[1]))["deleted_count"])
-            ids = [r[0] for r in conn.execute("SELECT id FROM telegram_customer_operations WHERE (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id)").fetchall()]
+            ids = [r[0] for r in conn.execute("SELECT id FROM telegram_customer_operations WHERE (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id) AND NOT EXISTS (SELECT 1 FROM customer_node_bindings sb WHERE sb.suspended_by_operation_id=telegram_customer_operations.id)").fetchall()]
             if ids:
                 ph = ",".join("?" for _ in ids)
                 conn.execute(f"DELETE FROM telegram_customer_operations WHERE id IN ({ph})", ids)
@@ -6025,7 +6025,7 @@ class TelegramRegistry:
         with connect(self._db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
             params = (f"-{days} days",)
-            op = conn.execute("DELETE FROM telegram_customer_operations WHERE (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND COALESCE(finished_at, dismissed_at, updated_at, created_at) < datetime('now', ?) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id)", params).rowcount if days else 0
+            op = conn.execute("DELETE FROM telegram_customer_operations WHERE (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND COALESCE(finished_at, dismissed_at, updated_at, created_at) < datetime('now', ?) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id) AND NOT EXISTS (SELECT 1 FROM customer_node_bindings sb WHERE sb.suspended_by_operation_id=telegram_customer_operations.id)", params).rowcount if days else 0
             finding = conn.execute("DELETE FROM telegram_drift_findings WHERE status IN ('resolved','adopted') AND COALESCE(resolved_at,last_seen_at) < datetime('now', ?)", params).rowcount if days else 0
             jobs = conn.execute("DELETE FROM telegram_provisioning_jobs WHERE status IN ('succeeded','failed','cancelled') AND finished_at IS NOT NULL AND finished_at < datetime('now', ?)", params).rowcount if days else 0
             audit = conn.execute("DELETE FROM telegram_audit_log WHERE created_at < datetime('now', ?)", (f"-{audit_days} days",)).rowcount if audit_days else 0
