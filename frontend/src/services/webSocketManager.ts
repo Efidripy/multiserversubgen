@@ -45,6 +45,23 @@ export class WebSocketManager {
     }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return Promise.resolve();
     if (this.connectPromise) return this.connectPromise;
+    if (!getAuth().wsTicket) {
+      if (!this.ticketRefreshPromise) {
+        this.ticketRefreshPromise = verifyCurrentAuth()
+          .then((verified) => {
+            if (!verified.ws_ticket) return false;
+            setWsTicket(verified.ws_ticket);
+            return true;
+          })
+          .catch(() => false)
+          .finally(() => { this.ticketRefreshPromise = null; });
+      }
+      return this.ticketRefreshPromise.then((ok) => {
+        if (!ok) throw new Error('WebSocket ticket refresh failed.');
+        if (this.closedByOwner) throw new Error('WebSocket connection closed.');
+        return this.connect();
+      });
+    }
 
     this.connectPromise = new Promise((resolve, reject) => {
       let settled = false;
@@ -78,6 +95,7 @@ export class WebSocketManager {
         }
 
         this.ws = new WebSocket(this.url, ['mssg-ws', `mssg-ticket.${auth.wsTicket}`]);
+        setWsTicket('');
 
         this.ws.onopen = () => {
           devLog('[WebSocket] Connected');

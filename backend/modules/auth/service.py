@@ -72,6 +72,8 @@ class AuthService:
         self.role_operators: Set[str] = role_operators or set()
         self.role_admins: Set[str] = role_admins or set()
         self.ws_auth_secret = ws_auth_secret or secrets.token_urlsafe(32)
+        self._used_ws_tickets: Dict[str, int] = {}
+        self._ws_ticket_lock = Lock()
         self.mfa_totp_enabled = mfa_totp_enabled
         self.mfa_totp_users: Dict[str, str] = mfa_totp_users or {}
 
@@ -157,6 +159,11 @@ class AuthService:
             now = int(time.time())
             if expires_at < now or not username or not nonce:
                 return None
+            with self._ws_ticket_lock:
+                self._used_ws_tickets = {key: exp for key, exp in self._used_ws_tickets.items() if exp >= now}
+                if signature in self._used_ws_tickets:
+                    return None
+                self._used_ws_tickets[signature] = expires_at
             return username
         except (ValueError, TypeError, UnicodeError):
             return None
