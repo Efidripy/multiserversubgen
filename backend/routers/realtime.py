@@ -6,7 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 CHANNEL_MIN_ROLES = {
     "server_status": "viewer",
     "traffic": "viewer",
-    "snapshot_delta": "viewer",
+    "snapshot_delta": "operator",  # carries the clients and inbounds tables
     "clients": "operator",
     "inbounds": "operator",
 }
