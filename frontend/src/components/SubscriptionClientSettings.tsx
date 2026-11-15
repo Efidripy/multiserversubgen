@@ -722,7 +722,7 @@ export const SubscriptionClientSettings: React.FC = () => {
                             {t(`subscriptionClients.groups.${groupKey}`)}
                           </h4>
                           <div className="mt-2 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-                            {fields.map((field) => {
+                            {fields.filter((field) => !(selectedClient.kind === 'happ' && /^routing_(ios|android|windows)_value$/.test(field.key))).map((field) => {
                               const fieldLabel = t(`subscriptionClients.fields.${selectedClient.kind}.${field.key}`);
                               const currentValue = selectedClient.settings?.[field.key];
                               const isHappRouting = selectedClient.kind === 'happ' && field.key === 'routing';
@@ -802,7 +802,7 @@ export const SubscriptionClientSettings: React.FC = () => {
                                     )}
 
                                     {field.type === 'bool' && (
-                                      <div className="flex items-center pt-1">
+                                      <div className="min-w-0 pt-1"><div className="flex items-center">
                                         <input
                                           className="form-check-input"
                                           type="checkbox"
@@ -819,6 +819,20 @@ export const SubscriptionClientSettings: React.FC = () => {
                                           <span className="ml-2 min-w-0 text-xs text-gray-400">{t('subscriptionClients.happRouting.platformHint')}</span>
                                         )}
                                       </div>
+                                      {isHappPlatform && (
+                                        <textarea
+                                          rows={3}
+                                          className={cn(codeInputClass, 'mt-2 w-full')}
+                                          value={selectedClient.settings?.[`${field.key}_value`] ?? ''}
+                                          disabled={!checked}
+                                          aria-label={`${fieldLabel}: ${t('subscriptionClients.happRouting.platformValue')}`}
+                                          placeholder={t('subscriptionClients.happRouting.platformValueHint')}
+                                          onChange={(e) => {
+                                            updateClientSetting(selectedIndex, `${field.key}_value`, e.target.value);
+                                            if (e.target.value.trim()) updateClientSetting(selectedIndex, 'routing_enable', true);
+                                          }}
+                                        />
+                                      )}</div>
                                     )}
 
                                     {(field.type === 'tristate' || field.type === 'enum') && (
