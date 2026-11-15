@@ -24,6 +24,12 @@ HttpOnly session cookie для периодического refresh. Basic Auth 
 для исходного API bootstrap и внешних API-клиентов, но не должен повторяться
 в minute-poll Dashboard.
 
+### WebSocket limits
+
+Runtime environment variables `WS_MAX_CONNECTIONS_PER_USER` (default `20`),
+`WS_MAX_CONNECTIONS_TOTAL` (default `500`) and `WS_MAX_MESSAGE_BYTES`
+(default `65536`, UTF-8 bytes) limit each backend process. Values must be positive integers.
+
 ### Graceful shutdown и deploy
 
 `sub-manager` перед остановкой закрывает admission новых фоновых операций и
