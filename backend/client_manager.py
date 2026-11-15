@@ -16,6 +16,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
+from shared.http_config import get_requests_verify_value
 from xui_session import (
     XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC,
     build_panel_base_url,
@@ -95,11 +96,7 @@ def _client_matches_identifier(client: Dict, identifier: str) -> bool:
 
 
 def _requests_verify_value():
-    if not VERIFY_TLS:
-        return False
-    if CA_BUNDLE_PATH:
-        return CA_BUNDLE_PATH
-    return True
+    return get_requests_verify_value(verify_tls=VERIFY_TLS, ca_bundle_path=CA_BUNDLE_PATH)
 
 
 class ClientManager:
@@ -822,12 +819,12 @@ class ClientManager:
                     return node_clients
 
                 # v2 fallback: извлекаем клиентов из инбаундов
+                inbounds = []
                 try:
                     inbounds_res = xui_request(
                         s, "GET", f"{base_url}/panel/api/inbounds/list",
                         timeout=XUI_FAST_TIMEOUT_SEC, retries=XUI_FAST_RETRIES,
                     )
-                    inbounds = []
                     if inbounds_res.status_code == 200:
                         data = inbounds_res.json()
                         inbounds = data.get("obj", []) if data.get("success") else []

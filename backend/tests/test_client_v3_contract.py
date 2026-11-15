@@ -983,3 +983,16 @@ class TestClientV3Contracts:
             call(session, "POST", f"{self.base_url}/panel/api/inbounds/resetAllTraffics"),
             call(session, "POST", f"{self.base_url}/panel/api/inbounds/7/resetTraffic"),
         ]
+
+
+def test_v2_fallback_request_failure_is_logged_once_without_unbound_error(caplog):
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), "https://198.51.100.8:443")), patch.object(
+        manager, "_probe_v3", return_value=("unsupported", None)
+    ), patch("client_manager.xui_request", side_effect=RuntimeError("boom")):
+        assert manager.get_all_clients([_node()]) == []
+
+    assert "Failed to fetch inbounds" in caplog.text
+    assert "Failed to fetch clients" not in caplog.text

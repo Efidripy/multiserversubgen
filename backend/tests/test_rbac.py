@@ -55,6 +55,52 @@ def test_sensitive_client_routes_are_admin_only(method, path):
     assert main.has_min_role("admin", required_role) is True
 
 
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/api/v1/inbounds",
+        "/api/v1/inbounds/",
+        "/api/v1/nodes/7/inbounds",
+        "/api/v1/nodes/7/clients",
+        "/api/v1/clients",
+        "/api/v1/clients/paged",
+        "/api/v1/clients/search",
+        "/api/v1/clients/depleted",
+        "/api/v1/clients/expired",
+        "/api/v1/clients/find-by-ip",
+        "/api/v1/snapshots/latest",
+    ),
+)
+def test_credential_bearing_reads_require_operator(path):
+    required_role = main._required_role_for_request("GET", path)
+
+    assert required_role == "operator"
+    assert main.has_min_role("viewer", required_role) is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/api/v1/inbounds/slim",
+        "/api/v1/inbounds/options",
+        "/api/v1/inbounds/stats",
+        "/api/v1/clients/count",
+        "/api/v1/clients/online",
+        "/api/v1/clients/presence",
+        "/api/v1/dashboard/summary",
+        "/api/v1/nodes",
+    ),
+)
+def test_credential_free_reads_stay_viewer(path):
+    assert main._required_role_for_request("GET", path) == "viewer"
+
+
+def test_snapshot_delta_channel_requires_operator():
+    from routers.realtime import CHANNEL_MIN_ROLES
+
+    assert CHANNEL_MIN_ROLES["snapshot_delta"] == "operator"
+
+
 def test_review_hardened_routes_require_admin():
     for method, path in (
         ("POST", "/api/v1/subscription-groups"),

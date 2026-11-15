@@ -376,6 +376,10 @@ export const App: React.FC = () => {
     if (role !== 'admin' && (activeTab === 'backup' || activeTab === 'subscriptions' || activeTab === 'telegram')) {
       setActiveTab('dashboard');
     }
+    // Viewers cannot read client or inbound lists (credential-bearing reads need operator).
+    if (role === 'viewer' && (activeTab === 'inbounds' || activeTab === 'clients')) {
+      setActiveTab('dashboard');
+    }
   }, [activeTab, authBootstrapDone, role]);
 
   useEffect(() => {
@@ -514,7 +518,7 @@ export const App: React.FC = () => {
   };
 
   useWebSocketMessages({
-    channels: role === 'viewer' ? ['snapshot_delta'] : ['inbounds', 'snapshot_delta'],
+    channels: role === 'viewer' ? [] : ['inbounds', 'snapshot_delta'],
     enabled: isAuthenticated,
     onMessage: (msg) => {
       if (msg.type === 'snapshot_delta') {
@@ -776,7 +780,9 @@ export const App: React.FC = () => {
 
   const visibleTabs: TabType[] = role === 'admin'
     ? ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring', 'backup', 'subscriptions', 'telegram']
-    : ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring'];
+    : role === 'viewer'
+      ? ['dashboard', 'traffic', 'monitoring']
+      : ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring'];
 
   const sidebarItems: SidebarNavItem[] = visibleTabs.map((tabId) => ({
     id: tabId,

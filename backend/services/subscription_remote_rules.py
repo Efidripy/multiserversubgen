@@ -21,11 +21,6 @@ _ERROR_CODES = {"url", "fetch", "redirect", "too_large", "encoding", "body", "ki
 _LOGGER = logging.getLogger(__name__)
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
 def _read_chunks(read, *, chunk_size: int = 65536) -> str:
     chunks: list[bytes] = []
     total = 0

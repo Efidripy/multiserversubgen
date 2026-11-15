@@ -263,6 +263,18 @@ class AuthService:
             return "admin"
         if method == "GET" and path in {"/metrics", "/api/v1/metrics"}:
             return "admin"
+        if method == "GET":
+            # These reads carry client UUIDs/passwords and inbound key material.
+            bare = path.rstrip("/")
+            if (
+                bare in {"/api/v1/inbounds", "/api/v1/clients", "/api/v1/snapshots/latest"}
+                or bare.startswith((
+                    "/api/v1/clients/paged", "/api/v1/clients/search", "/api/v1/clients/depleted",
+                    "/api/v1/clients/expired", "/api/v1/clients/find-by-ip",
+                ))
+                or (bare.startswith("/api/v1/nodes/") and bare.endswith(("/inbounds", "/clients")))
+            ):
+                return "operator"
         if method == "PUT":
             # Node PUT can repoint panel_url, which makes the collector log in with stored credentials.
             if path.startswith(("/api/v1/nodes/", "/api/v1/subscription-groups")):

@@ -8,8 +8,16 @@ from typing import Optional
 from cryptography.fernet import Fernet, InvalidToken
 
 
-# Путь к ключу шифрования
-KEY_FILE = "/opt/sub-manager/.encryption_key"
+# Путь к ключу шифрования: рядом с проектом. Установки с нестандартным PROJECT_NAME,
+# уже создавшие ключ по старому фиксированному пути, продолжают читать его оттуда;
+# чужой ключ, недоступный для чтения, не подхватывается.
+_LEGACY_KEY_FILE = "/opt/sub-manager/.encryption_key"
+_PROJECT_KEY_FILE = os.path.join(os.getenv("PROJECT_DIR", "/opt/sub-manager"), ".encryption_key")
+KEY_FILE = (
+    _PROJECT_KEY_FILE
+    if os.path.exists(_PROJECT_KEY_FILE) or not os.access(_LEGACY_KEY_FILE, os.R_OK)
+    else _LEGACY_KEY_FILE
+)
 
 
 def generate_key() -> bytes:

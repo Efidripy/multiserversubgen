@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
 from core.refresh import effective_refresh
+from services.live_stats_runtime import LiveStatsRuntime
+from services.node_access import snapshot_by_node, snapshot_for_node as _snapshot_for_node
 
 
 def build_live_data_router(
@@ -22,11 +24,7 @@ def build_live_data_router(
     router = APIRouter()
     projection_period_handler = get_cached_traffic_stats_projection_by_period
 
-    def _metric(value) -> int:
-        try:
-            return max(0, int(float(value or 0)))
-        except (TypeError, ValueError, OverflowError):
-            return 0
+    _metric = LiveStatsRuntime._metric
 
     def _coalesce_client_stats(stats: Dict) -> Dict:
         """Return a display projection with one case-insensitive key per email.
@@ -151,30 +149,7 @@ def build_live_data_router(
         return payload if isinstance(payload, dict) else {"timestamp": None, "nodes": [], "count": 0}
 
     def _snapshot_by_node(nodes: list) -> tuple[Dict[str, Dict], Dict[str, Dict], Dict]:
-        snapshot = _latest_snapshot_payload()
-        snapshot_nodes = snapshot.get("nodes") if isinstance(snapshot, dict) else []
-        by_id: Dict[str, Dict] = {}
-        by_name: Dict[str, Dict] = {}
-        if isinstance(snapshot_nodes, list):
-            for item in snapshot_nodes:
-                if not isinstance(item, dict):
-                    continue
-                node_id = item.get("node_id")
-                name = item.get("name") or item.get("node")
-                if node_id is not None:
-                    by_id[str(node_id)] = item
-                if name:
-                    by_name[str(name)] = item
-        return by_id, by_name, snapshot
-
-    def _snapshot_for_node(node: Dict, by_id: Dict[str, Dict], by_name: Dict[str, Dict]) -> Dict | None:
-        node_id = node.get("id")
-        if node_id is not None and str(node_id) in by_id:
-            return by_id[str(node_id)]
-        name = node.get("name")
-        if name and str(name) in by_name:
-            return by_name[str(name)]
-        return None
+        return snapshot_by_node(_latest_snapshot_payload())
 
     def _safe_panel_url(value) -> str:
         raw = str(value or "").strip()

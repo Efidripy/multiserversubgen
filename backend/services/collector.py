@@ -584,9 +584,6 @@ class SnapshotCollector:
         except Exception as exc:
             logger.warning("Failed to persist %d collector snapshots: %s", len(valid_snapshots), exc)
 
-    def _upsert_snapshot_row(self, snapshot: Dict) -> None:
-        self._upsert_snapshot_rows([snapshot])
-
     @staticmethod
     def _durable_snapshot_payload(snapshot: Dict) -> Dict:
         """Return the SQLite-safe snapshot shape without ephemeral TCP telemetry."""

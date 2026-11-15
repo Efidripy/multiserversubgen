@@ -660,6 +660,8 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
   };
 
   const loadLatestSnapshot = async (): Promise<SnapshotNode[] | null> => {
+    // The raw snapshot carries client credentials and needs operator; viewers get the cached status only.
+    if (getAuth().role === 'viewer') return null;
     const requestId = ++latestSnapshotRequestIdRef.current;
     latestSnapshotAbortRef.current?.abort();
     const controller = new AbortController();
