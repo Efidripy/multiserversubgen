@@ -9,7 +9,9 @@ on:
       - "scripts/**"
       - "systemd/**"
       - "docs/**"
-      - "PROJECT.md"
+      - "monitoring/**"
+      - "ruff.toml"
+      - ".github/dependabot.yml"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
@@ -19,7 +21,9 @@ on:
       - "scripts/**"
       - "systemd/**"
       - "docs/**"
-      - "PROJECT.md"
+      - "monitoring/**"
+      - "ruff.toml"
+      - ".github/dependabot.yml"
       - ".github/workflows/backend-ci.yml"
 
 jobs:
