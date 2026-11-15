@@ -55,9 +55,13 @@ class SubscriptionRefreshWindow:
     Subscriptions are built from persisted node snapshots, so invalidating at
     write time alone would just re-cache the stale snapshot. Every snapshot
     batch persisted while the window is open invalidates again.
+
+    The default window matches the response-cache TTL and the collector's
+    maximum poll interval, so a slow forced cycle that persists late still
+    lands inside it; invalidating a few extra times in that span is cheap.
     """
 
-    def __init__(self, invalidate, window_sec: float = 60.0, clock=time.monotonic):
+    def __init__(self, invalidate, window_sec: float = 300.0, clock=time.monotonic):
         self._invalidate = invalidate
         self._window_sec = window_sec
         self._clock = clock
