@@ -5768,20 +5768,6 @@ class TelegramRegistry:
             )
         return policy
 
-    def list_eligible_provisioning_nodes(self) -> list[NodeProvisioningPolicy]:
-        with connect(self._db_path) as conn:
-            rows = conn.execute(
-                """
-                SELECT p.node_id, p.provisioning_enabled, p.total_bytes, p.validity_days,
-                       p.client_enabled, p.policy_version, p.updated_by
-                FROM telegram_node_policies AS p
-                JOIN nodes AS n ON n.id = p.node_id
-                WHERE p.provisioning_enabled = 1 AND n.enabled = 1 AND n.read_only = 0
-                ORDER BY n.name COLLATE NOCASE, n.id
-                """
-            ).fetchall()
-        return [_policy_from_row(row) for row in rows]
-
     def list_provisioning_jobs(self, *, limit: int = 100) -> list[ProvisioningJobStatus]:
         """Admin projection for job state; deliberately excludes remote UUIDs/sub IDs."""
 
@@ -9273,9 +9259,3 @@ class TelegramRegistry:
         if automatic:
             return None
         return next(item for item in self.list_drift_findings(status="all", limit=200) if item.finding_id == local_finding_id)
-
-
-def exact_node_ids(rows: Iterable[CustomerNodeMatrixRow]) -> set[int]:
-    """Small helper for later preview commands; never infer IDs from labels."""
-
-    return {row.node_id for row in rows}

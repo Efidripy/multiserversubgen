@@ -25,11 +25,6 @@ export interface SubscriptionDeviceItem {
   app?: string;
 }
 
-export interface SubscriptionDevicesApiResponse {
-  devices: SubscriptionDeviceItem[];
-  max_devices?: number;
-}
-
 export interface DeviceGroup {
   key: string;
   label: string;

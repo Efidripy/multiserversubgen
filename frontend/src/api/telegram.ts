@@ -537,10 +537,6 @@ export async function listTelegramJobsPage(limit = 100, offset = 0, signal?: Abo
   };
 }
 
-export async function listTelegramJobs(): Promise<ProvisioningJob[]> {
-  return (await listTelegramJobsPage()).items;
-}
-
 export async function clearTelegramJobHistory(): Promise<number> {
   const response = await api.post(
     '/v1/telegram/jobs/history/clear',
