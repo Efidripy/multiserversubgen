@@ -1413,6 +1413,7 @@ def test_devices_hide_revoked_guest_links_and_keep_compact_rename_controls(tmp_p
         if item.get("callback_data", "").startswith("device:rename:")
     ]
     assert "Гостевая ссылка" in before.text
+    assert "👋 Гостевая ссылка — активно до " in before.text
     assert button_texts and all(text.startswith("✏️ ") and "Переименовать" not in text for text in button_texts)
     revoked_callbacks = [
         item.get("callback_data", "")
