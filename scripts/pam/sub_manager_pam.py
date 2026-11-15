@@ -32,9 +32,12 @@ def authenticate_request(
     peer_uid: int,
     expected_uid: int,
     pam_authenticate: Callable[[str, str], bool],
+    pam_status: Optional[Callable[[str, str], int]] = None,
 ) -> bytes:
     """Validate one wire request and return the deliberately tiny response."""
     ok = False
+    diag = False
+    status = None
     if peer_uid == expected_uid and len(payload) <= MAX_REQUEST:
         try:
             text = payload.decode("utf-8")
@@ -42,16 +45,26 @@ def authenticate_request(
                 request = json.loads(text[:-1])
                 username = request.get("user") if isinstance(request, dict) else None
                 password = request.get("password") if isinstance(request, dict) else None
+                diag = isinstance(request, dict) and request.get("diag") is True
+                expected_keys = {"user", "password", "diag"} if diag else {"user", "password"}
                 if (
                     isinstance(request, dict)
-                    and set(request) == {"user", "password"}
+                    and set(request) == expected_keys
                     and validate_username(username)
                     and isinstance(password, str)
                 ):
-                    ok = bool(pam_authenticate(username, password))
+                    if diag and pam_status is not None:
+                        # Self-check only: report the PAM code so the installer can tell
+                        # "wrong password" from "PAM cannot read its data".
+                        status = int(pam_status(username, password))
+                        ok = status == 0
+                    elif not diag:
+                        ok = bool(pam_authenticate(username, password))
         except (UnicodeDecodeError, json.JSONDecodeError, AttributeError, TypeError, ValueError):
             ok = False
-    return (b'{"ok":true}\n' if ok else b'{"ok":false}\n')
+    if diag and status is not None:
+        return json.dumps({"ok": ok, "pam": status}, separators=(",", ":")).encode("ascii") + b"\n"
+    return b'{"ok":true}\n' if ok else b'{"ok":false}\n'
 
 
 class PamAuthenticator:
@@ -62,6 +75,9 @@ class PamAuthenticator:
         self._lib = ctypes.CDLL(ctypes.util.find_library("pam") or "libpam.so.0")
 
     def __call__(self, username: str, password: str) -> bool:
+        return self.status(username, password) == 0
+
+    def status(self, username: str, password: str) -> int:
         class PamMessage(ctypes.Structure):
             _fields_ = [("msg_style", ctypes.c_int), ("msg", ctypes.c_char_p)]
 
@@ -115,10 +131,10 @@ class PamAuthenticator:
         conversation_struct = PamConv(conversation, None)
         status = pam_start(self.service.encode(), username.encode(), ctypes.byref(conversation_struct), ctypes.byref(handle))
         if status != 0:
-            return False
+            return int(status)
         try:
             auth_status = pam_auth(handle, 0)
-            return auth_status == 0
+            return int(auth_status)
         finally:
             pam_end(handle, locals().get("auth_status", status))
 
@@ -138,15 +154,30 @@ def serve_connection(conn: socket.socket, expected_uid: int, pam_auth: Callable[
                 break
     except socket.timeout:
         data = b""
-    conn.sendall(authenticate_request(data, peer_uid=peer_uid, expected_uid=expected_uid, pam_authenticate=pam_auth))
+    conn.sendall(
+        authenticate_request(
+            data,
+            peer_uid=peer_uid,
+            expected_uid=expected_uid,
+            pam_authenticate=pam_auth,
+            pam_status=getattr(pam_auth, "status", None),
+        )
+    )
 
 
-def self_check(path: str) -> int:
+# PAM_AUTH_ERR / PAM_USER_UNKNOWN: PAM ran and rejected the bogus password.
+# Anything else (PAM_AUTHINFO_UNAVAIL, PAM_SYSTEM_ERR, ...) means the stack cannot do its job.
+SELF_CHECK_OK_STATUSES = {7, 10}
+
+
+def self_check(path: str, probe_user: str) -> int:
+    request = {"user": probe_user, "password": "invalid-probe-password", "diag": True}
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(READ_TIMEOUT)
         client.connect(path)
-        client.sendall(b'{"user":"__sub_manager_probe__","password":"invalid"}\n')
-        return 0 if json.loads(client.recv(64).decode("utf-8")).get("ok") is False else 1
+        client.sendall(json.dumps(request, separators=(",", ":")).encode("utf-8") + b"\n")
+        reply = json.loads(client.recv(64).decode("utf-8"))
+    return 0 if reply.get("ok") is False and reply.get("pam") in SELF_CHECK_OK_STATUSES else 1
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -154,9 +185,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--uid", type=int)
     parser.add_argument("--pam-service", default="login")
     parser.add_argument("--self-check")
+    parser.add_argument("--probe-user", default="__sub_manager_probe__")
     args = parser.parse_args(argv)
     if args.self_check:
-        return self_check(args.self_check)
+        return self_check(args.self_check, args.probe_user)
     if args.uid is None or args.uid < 0:
         return 2
     pam_auth = PamAuthenticator(args.pam_service)

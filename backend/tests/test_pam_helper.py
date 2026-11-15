@@ -90,3 +90,24 @@ def test_units_and_installation_paths_are_hardened():
         text = (REPO / script).read_text(encoding="utf-8")
         assert "pam_helper_install" in text
         assert "/opt/sub-manager" not in text[text.find("pam_helper_install") : text.find("pam_helper_install") + 300]
+
+
+def test_diag_request_reports_pam_status_only_for_the_service_uid():
+    payload = b'{"user":"svc","password":"x","diag":true}\n'
+
+    def run(peer, status):
+        return json.loads(
+            PAM.authenticate_request(
+                payload,
+                peer_uid=peer,
+                expected_uid=1000,
+                pam_authenticate=lambda _u, _p: False,
+                pam_status=lambda _u, _p: status,
+            )
+        )
+
+    assert run(1000, 7) == {"ok": False, "pam": 7}
+    assert run(1001, 7) == {"ok": False}
+    # A diag flag without a status callback never reaches the plain authenticator.
+    assert json.loads(PAM.authenticate_request(payload, peer_uid=1000, expected_uid=1000, pam_authenticate=lambda _u, _p: True)) == {"ok": False}
+    assert PAM.SELF_CHECK_OK_STATUSES == {7, 10}

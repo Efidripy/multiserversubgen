@@ -34,7 +34,8 @@ pam_helper_install() {
     }
     # Run the probe as the service user: only then the helper takes the real PAM path
     # (a root caller is rejected by the peer-uid check before PAM is ever called).
-    if runuser -u "$project_name" -- /usr/bin/python3 "$helper_dir/sub_manager_pam.py"         --self-check /run/sub-manager-pam/pam.sock >/dev/null 2>&1; then
+    if runuser -u "$project_name" -- /usr/bin/python3 "$helper_dir/sub_manager_pam.py" \
+        --self-check /run/sub-manager-pam/pam.sock --probe-user "$project_name" >/dev/null 2>&1; then
         install -d -m 0755 "/etc/systemd/system/${project_name}.service.d"
         cat > "/etc/systemd/system/${project_name}.service.d/pam-helper.conf" <<EOF
 [Unit]
