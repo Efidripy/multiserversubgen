@@ -11,6 +11,7 @@ on:
       - "docs/**"
       - "monitoring/**"
       - "ruff.toml"
+      - "pyrightconfig.json"
       - ".github/dependabot.yml"
       - ".github/workflows/backend-ci.yml"
   pull_request:
@@ -23,6 +24,7 @@ on:
       - "docs/**"
       - "monitoring/**"
       - "ruff.toml"
+      - "pyrightconfig.json"
       - ".github/dependabot.yml"
       - ".github/workflows/backend-ci.yml"
 
@@ -45,6 +47,9 @@ jobs:
 
       - name: Lint backend
         run: ruff check backend
+
+      - name: Check pyright baseline
+        run: python scripts/ci/check-pyright-baseline.py -- npx --yes pyright@1.1.414
 
       - name: Run full backend tests
         env:
