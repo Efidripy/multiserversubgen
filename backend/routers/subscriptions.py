@@ -20,10 +20,12 @@ from services.subscription_tokens import (
     resolve_token,
 )
 from services.subscription_client_settings import (
+    _clean_header_value,
     build_headers as build_client_headers,
     device_app_name,
     load_settings as load_client_settings,
     match_client,
+    select_happ_routing,
     save_settings as save_client_settings,
     schema as client_settings_schema,
     section_schema as client_settings_section_schema,
@@ -195,15 +197,17 @@ def build_subscriptions_router(
             return
         device_os = request.headers.get("x-device-os")
         platform_hint = device_os if device_os is not None else request.headers.get("user-agent", "")
-        platform = None
-        for pattern, name in ((r"\b(?:ios|ipados|iphone|ipad)\b", "ios"), (r"\bandroid\b", "android"), (r"\bwindows\b", "windows")):
-            if re.search(pattern, platform_hint, re.IGNORECASE):
-                platform = name
-                break
-        if platform and not client.get("settings", {}).get(f"routing_{platform}", True):
+        values = resolve_client_settings(remote_store, client)
+        routing = select_happ_routing(values, platform_hint)
+        if routing is None:
             for name in list(headers):
                 if name.lower() in {"routing", "routing-enable"}:
                     del headers[name]
+        elif routing and values.get("routing_enable") and routing != values.get("routing", ""):
+            for name in list(headers):
+                if name.lower() == "routing":
+                    del headers[name]
+            headers["Routing"] = _clean_header_value(routing)
 
     def _client_headers(settings, user_agent):
         settings = copy.deepcopy(settings)

@@ -1,3 +1,5 @@
+import pytest
+
 from services.subscription_client_settings import default_settings, load_settings, match_client, save_settings
 from services.subscription_client_settings import build_headers, schema, validate_settings
 
@@ -67,3 +69,15 @@ def test_invalid_typed_fields_urls_headers_and_regex_are_rejected():
 
 def test_schema_marks_routing_fields_without_headers():
     assert {item["key"]: item["header"] for item in schema()["incy"]}["routing"] is None
+
+
+def test_happ_platform_routing_validation():
+    for platform in ("ios", "android", "windows"):
+        key = f"routing_{platform}_value"
+        settings = default_settings()
+        settings["clients"][0]["settings"][key] = "https://invalid"
+        with pytest.raises(ValueError, match=key):
+            validate_settings(settings)
+        settings["clients"][0]["settings"][key] = "happ://" + "x" * 13000
+        with pytest.raises(ValueError, match="headers"):
+            validate_settings(settings)

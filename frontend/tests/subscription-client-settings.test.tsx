@@ -41,6 +41,7 @@ const mockSchema = {
     { key: 'routing_enable', header: 'Routing-Enable', type: 'bool' as const, group: 'routing' },
     { key: 'routing', header: 'Routing', type: 'text' as const, group: 'routing' },
     ...['routing_ios', 'routing_android', 'routing_windows'].map(key => ({ key, header: null, type: 'bool' as const, group: 'routing' })),
+    ...['routing_ios_value', 'routing_android_value', 'routing_windows_value'].map(key => ({ key, header: null, type: 'text' as const, group: 'routing' })),
     { key: 'tun_mode', header: 'Tun-Mode', type: 'enum' as const, group: 'network', options: ['system', 'gvisor'] },
   ],
   mihomo: [
@@ -124,6 +125,21 @@ describe('SubscriptionClientSettings', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it('edits platform routing and disables its field with the switch', async () => {
+    render(<SubscriptionClientSettings />);
+    await waitFor(() => expect(screen.getByText('subscriptionClients.tabs.clients')).toBeTruthy());
+    fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
+    for (const platform of ['ios', 'android', 'windows']) {
+      const label = `subscriptionClients.fields.happ.routing_${platform}`;
+      const input = screen.getByLabelText(`${label}: subscriptionClients.happRouting.platformValue`) as HTMLTextAreaElement;
+      expect(input.disabled).toBe(false);
+      fireEvent.change(input, { target: { value: `happ://${platform}` } });
+      expect(input.value).toBe(`happ://${platform}`);
+      fireEvent.click(screen.getByRole('switch', { name: label }));
+      expect(input.disabled).toBe(true);
+    }
   });
 
   it('shows and toggles all Happ platform switches', async () => {

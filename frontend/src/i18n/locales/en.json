@@ -1004,6 +1004,8 @@
       "insertToken": "Insert"
     },
     "happRouting": {
+      "platformValue": "Platform routing",
+      "platformValueHint": "Leave empty to use the common routing",
       "platformHint": "Send routing rules to this platform.",
       "openEditor": "Happ Routing Editor",
       "closeEditor": "Close Editor",
