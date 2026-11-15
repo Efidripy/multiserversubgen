@@ -729,11 +729,7 @@ class LiveStatsRuntime:
                 "note": note,
             }
 
-        def metric(value) -> int:
-            try:
-                return max(0, int(float(value or 0)))
-            except (TypeError, ValueError, OverflowError):
-                return 0
+        metric = self._metric
 
         identity_stats = projection.get("identity_stats") if isinstance(projection, dict) else None
         use_identity_stats = group_by in {"node", "inbound"} and isinstance(identity_stats, dict)

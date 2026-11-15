@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
 from core.refresh import effective_refresh
+from services.live_stats_runtime import LiveStatsRuntime
 from services.node_access import snapshot_by_node, snapshot_for_node as _snapshot_for_node
 
 
@@ -23,11 +24,7 @@ def build_live_data_router(
     router = APIRouter()
     projection_period_handler = get_cached_traffic_stats_projection_by_period
 
-    def _metric(value) -> int:
-        try:
-            return max(0, int(float(value or 0)))
-        except (TypeError, ValueError, OverflowError):
-            return 0
+    _metric = LiveStatsRuntime._metric
 
     def _coalesce_client_stats(stats: Dict) -> Dict:
         """Return a display projection with one case-insensitive key per email.

@@ -216,6 +216,19 @@ def _normalize_3xui_status(node: Dict, obj: Any) -> Dict:
     }
 
 
+def _normalize_session_result(session_result: tuple) -> tuple:
+    if not isinstance(session_result, tuple):
+        return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
+    if len(session_result) == 3:
+        return session_result
+    if len(session_result) == 2:
+        session, base_url = session_result
+        if session:
+            return session, base_url, {"ok": True, "reason": "ok", "error": ""}
+        return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
+    return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
+
+
 class ThreeXUIMonitor:
     """Монитор 3x-UI с cookie-based аутентификацией.
 
@@ -284,18 +297,7 @@ class ThreeXUIMonitor:
         normalized["is_reality"] = security == "reality"
         return normalized
 
-    @staticmethod
-    def _normalize_session_result(session_result: tuple) -> tuple:
-        if not isinstance(session_result, tuple):
-            return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
-        if len(session_result) == 3:
-            return session_result
-        if len(session_result) == 2:
-            session, base_url = session_result
-            if session:
-                return session, base_url, {"ok": True, "reason": "ok", "error": ""}
-            return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
-        return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
+    _normalize_session_result = staticmethod(_normalize_session_result)
 
     def _get_session(self, node: Dict, *, force_reauth: bool = False) -> tuple:
         """Создать авторизованную сессию для узла.
@@ -629,18 +631,7 @@ class ServerMonitor:
     def _is_read_only(node: Dict) -> bool:
         return bool(node.get("read_only"))
 
-    @staticmethod
-    def _normalize_session_result(session_result: tuple) -> tuple:
-        if not isinstance(session_result, tuple):
-            return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
-        if len(session_result) == 3:
-            return session_result
-        if len(session_result) == 2:
-            session, base_url = session_result
-            if session:
-                return session, base_url, {"ok": True, "reason": "ok", "error": ""}
-            return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
-        return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
+    _normalize_session_result = staticmethod(_normalize_session_result)
 
     @staticmethod
     def _xui_success(res) -> bool:
