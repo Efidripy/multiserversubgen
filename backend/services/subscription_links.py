@@ -49,6 +49,29 @@ def invalidate_subscription_cache() -> None:
         _link_inbound_remarks.clear()
 
 
+class SubscriptionRefreshWindow:
+    """Drop subscription caches when fresh node snapshots land after a remote write.
+
+    Subscriptions are built from persisted node snapshots, so invalidating at
+    write time alone would just re-cache the stale snapshot. Every snapshot
+    batch persisted while the window is open invalidates again.
+    """
+
+    def __init__(self, invalidate, window_sec: float = 60.0, clock=time.monotonic):
+        self._invalidate = invalidate
+        self._window_sec = window_sec
+        self._clock = clock
+        self._until = 0.0
+
+    def open(self) -> None:
+        self._until = self._clock() + self._window_sec
+        self._invalidate()
+
+    def on_snapshots(self) -> None:
+        if self._clock() < self._until:
+            self._invalidate()
+
+
 def get_link_inbound_remark(link: str) -> str:
     """Return the inbound remark associated with a generated link."""
     with _cache_lock:
