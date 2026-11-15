@@ -5,6 +5,7 @@ import os
 def _key_file(monkeypatch, project_dir, existing):
     monkeypatch.setenv("PROJECT_DIR", project_dir)
     monkeypatch.setattr(os.path, "exists", lambda path: path in existing)
+    monkeypatch.setattr(os, "access", lambda path, mode: path in existing)
     import crypto
 
     try:
