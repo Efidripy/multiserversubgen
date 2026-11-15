@@ -1,19 +1,20 @@
 import asyncio
 import base64
 import datetime
-import io
 import os
 import re
 import sqlite3
 from services.db_bootstrap import connect
 from services.node_access import snapshot_by_node, snapshot_for_node as _snapshot_for_node
 import time
+import tempfile
 import zipfile
 from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import ORJSONResponse, Response
+from fastapi.responses import ORJSONResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
 from shared.security import (
     MAX_BACKUP_BYTES,
     MAX_BACKUP_B64_CHARS,
@@ -25,6 +26,14 @@ from shared.security import (
 DEFAULT_BACKUP_MAX_WORKERS = 8
 MAX_BACKUP_WORKERS = 32
 MAX_FLEET_HISTORY_POINTS = 24_000
+DEFAULT_FLEET_BACKUP_BYTES = 1024 * 1024 * 1024
+
+
+def _fleet_backup_limit() -> int:
+    try:
+        return max(0, int(os.getenv("MAX_FLEET_BACKUP_BYTES", str(DEFAULT_FLEET_BACKUP_BYTES))))
+    except ValueError:
+        return DEFAULT_FLEET_BACKUP_BYTES
 
 
 def _backup_worker_limit() -> int:
@@ -321,33 +330,72 @@ def build_operations_router(
             raise HTTPException(status_code=401)
 
         nodes = await _load_nodes()
-        backups = await _collect_backups(nodes, server_monitor.get_database_backup)
-        if request.query_params.get("format", "").lower() == "json":
-            return {"backups": backups, "count": len(backups)}
-
-        ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        mem = io.BytesIO()
-        with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for idx, backup in enumerate(backups, start=1):
-                node_name = re.sub(r"[\\/:]|\.\.", "_", backup.get("node") or f"node_{idx}")
-                if backup.get("error"):
-                    zf.writestr(f"{node_name}.error.txt", backup.get("error", "unknown error"))
-                    continue
-                try:
-                    raw = base64.b64decode(backup.get("backup_b64", ""))
-                    if raw:
-                        zf.writestr(f"{node_name}.db", raw)
+        as_json = request.query_params.get("format", "").lower() == "json"
+        limit = _fleet_backup_limit()
+        total = 0
+        backups = [] if as_json else None
+        archive = None if as_json else tempfile.TemporaryFile()
+        try:
+            zf = zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) if archive else None
+            try:
+                for idx, node in enumerate(nodes, start=1):
+                    try:
+                        backup = await _run(server_monitor.get_database_backup, node)
+                    except Exception:
+                        backup = {"node": node.get("name"), "error": "backup request failed"}
+                    if not isinstance(backup, dict):
+                        backup = {"node": node.get("name"), "error": "invalid backup response"}
+                    node_name = re.sub(r"[\\/:]|\.\.", "_", backup.get("node") or f"node_{idx}")
+                    raw = b""
+                    if not backup.get("error"):
+                        try:
+                            raw = base64.b64decode(backup.get("backup_b64", ""))
+                            if not raw and not as_json:
+                                backup = {"node": backup.get("node"), "error": "empty backup payload"}
+                            elif total + len(raw) > limit:
+                                backup = {"node": backup.get("node"), "error": "fleet backup size limit exceeded"}
+                                raw = b""
+                            else:
+                                total += len(raw)
+                        except Exception as exc:
+                            if not as_json:
+                                backup = {"node": backup.get("node"), "error": f"decode error: {exc}"}
+                    if as_json:
+                        backups.append(backup)
+                    elif backup.get("error"):
+                        zf.writestr(f"{node_name}.error.txt", backup["error"])
                     else:
-                        zf.writestr(f"{node_name}.error.txt", "empty backup payload")
-                except Exception as exc:
-                    zf.writestr(f"{node_name}.error.txt", f"decode error: {exc}")
-        mem.seek(0)
-        headers = {
-            "Content-Disposition": f'attachment; filename="all_backups_{ts}.zip"',
-            "Content-Encoding": "identity",
-            "Cache-Control": "no-store",
-        }
-        return Response(content=mem.getvalue(), media_type="application/zip", headers=headers)
+                        zf.writestr(f"{node_name}.db", raw)
+                    del backup, raw
+            finally:
+                if zf:
+                    zf.close()
+            if as_json:
+                return {"backups": backups, "count": len(backups)}
+
+            archive.seek(0)
+            ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            headers = {
+                "Content-Disposition": f'attachment; filename="all_backups_{ts}.zip"',
+                "Content-Encoding": "identity",
+                "Cache-Control": "no-store",
+            }
+
+            def stream_archive():
+                try:
+                    while chunk := archive.read(65536):
+                        yield chunk
+                finally:
+                    archive.close()
+
+            return StreamingResponse(
+                stream_archive(), media_type="application/zip", headers=headers,
+                background=BackgroundTask(archive.close),
+            )
+        except BaseException:
+            if archive:
+                archive.close()
+            raise
 
     @router.get("/api/v1/traffic/comparison")
     async def traffic_comparison(request: Request, range: str = "24h", node_id: int | None = None):
