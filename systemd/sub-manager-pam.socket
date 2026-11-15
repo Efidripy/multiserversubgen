@@ -1,0 +1,14 @@
+[Unit]
+Description=Sub-Manager PAM helper socket
+Before=sub-manager-pam@.service
+
+[Socket]
+ListenStream=/run/sub-manager-pam/pam.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=__PROJECT_NAME__
+DirectoryMode=0750
+Accept=yes
+
+[Install]
+WantedBy=sockets.target

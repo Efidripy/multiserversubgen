@@ -9,6 +9,24 @@ systemctl status sub-manager
 journalctl -u sub-manager -f
 ```
 
+### PAM-помощник
+
+В production проверка пароля выполняется root-owned помощником через сокет
+`/run/sub-manager-pam/pam.sock`; FastAPI не получает доступ к `/etc/shadow`.
+Проверить socket-активацию можно так:
+
+```bash
+systemctl status sub-manager-pam.socket
+systemctl status 'sub-manager-pam@*'
+```
+
+Установщик делает безопасную самопроверку и включает `PAM_HELPER_SOCKET` только
+после ответа `{"ok":false}` на тестовый пароль. Если помощник недоступен,
+создаётся drop-in `legacy-shadow.conf` с прежним `SupplementaryGroups=shadow`.
+Для ручного отката удалите `pam-helper.conf`, установите этот drop-in и выполните
+`systemctl daemon-reload && systemctl restart sub-manager`; повторный запуск
+установщика снова попробует включить помощник.
+
 ### Browser-сессия и рестарты
 
 Подписанный browser cookie живёт до 8 часов и переживает reload только при

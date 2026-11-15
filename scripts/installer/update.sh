@@ -14,6 +14,7 @@ source "${INSTALLER_DIR}/lib/resource_guard.sh"
 source "${MSSG_OPS_DIR}/lib/install_log.sh"
 source "${INSTALLER_DIR}/lib/runtime_secrets.sh"
 source "${INSTALLER_DIR}/lib/config_activation.sh"
+source "${INSTALLER_DIR}/lib/pam_helper.sh"
 source "${INSTALLER_DIR}/lib/component_ownership.sh"
 source "${INSTALLER_DIR}/lib/loki_config.sh"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
@@ -1415,6 +1416,7 @@ case $update_choice in
         runtime_secrets_write
         runtime_ensure_service_user
         configure_monitoring_stack
+        pam_helper_install "$PROJECT_NAME" "$SCRIPT_DIR"
         if ! activate_manager_config resource_guard_restart_services_sequentially "$PROJECT_NAME"; then
             echo "❌ Конфигурация manager не активирована; предыдущий unit/Nginx конфиг восстановлен."
             exit 1
