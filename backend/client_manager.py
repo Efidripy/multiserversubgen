@@ -822,12 +822,12 @@ class ClientManager:
                     return node_clients
 
                 # v2 fallback: извлекаем клиентов из инбаундов
+                inbounds = []
                 try:
                     inbounds_res = xui_request(
                         s, "GET", f"{base_url}/panel/api/inbounds/list",
                         timeout=XUI_FAST_TIMEOUT_SEC, retries=XUI_FAST_RETRIES,
                     )
-                    inbounds = []
                     if inbounds_res.status_code == 200:
                         data = inbounds_res.json()
                         inbounds = data.get("obj", []) if data.get("success") else []

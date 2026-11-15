@@ -321,7 +321,7 @@ def build_operations_router(
         node = await _load_node(node_id)
         form = await request.form()
         upload = form.get("file")
-        if upload is None:
+        if upload is None or isinstance(upload, str):
             raise HTTPException(status_code=400, detail="file required")
 
         content = await upload.read(MAX_BACKUP_BYTES + 1)

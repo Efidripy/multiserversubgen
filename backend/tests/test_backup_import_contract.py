@@ -58,6 +58,15 @@ def test_backup_import_rejects_unknown_multipart_before_remote_restore():
     assert monitor.imports == []
 
 
+def test_backup_import_rejects_text_field_instead_of_file():
+    client, monitor = _client()
+
+    response = client.post("/api/v1/backup/node/1/import", data={"file": "not-a-file"})
+
+    assert response.status_code == 400
+    assert monitor.imports == []
+
+
 def test_backup_import_accepts_sqlite_database_signature():
     client, monitor = _client()
     database = b"SQLite format 3\x00" + b"\x00" * 64
