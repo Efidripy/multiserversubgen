@@ -7,7 +7,7 @@ const read = (relativePath: string) => fs.readFileSync(path.resolve(__dirname, '
 
 describe('navigation performance regressions', () => {
   it('keeps privileged realtime channels out of a viewer session', () => {
-    expect(filterRealtimeChannelsForRole(['traffic', 'clients', 'inbounds', 'server_status'], 'viewer'))
+    expect(filterRealtimeChannelsForRole(['traffic', 'clients', 'inbounds', 'server_status', 'snapshot_delta'], 'viewer'))
       .toEqual(['traffic', 'server_status']);
     expect(filterRealtimeChannelsForRole(['traffic', 'clients', 'inbounds'], 'operator'))
       .toEqual(['traffic', 'clients', 'inbounds']);

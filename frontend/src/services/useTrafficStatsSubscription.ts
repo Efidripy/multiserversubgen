@@ -44,7 +44,7 @@ const EVENT_TO_CHANNEL: Record<string, string> = {
 export const filterRealtimeChannelsForRole = (channels: string[], role = getAuth().role): string[] => {
   return channels.filter((channel) => {
   if (role === 'admin' || role === 'operator') return true;
-  return channel === 'traffic' || channel === 'server_status' || channel === 'snapshot_delta';
+  return channel === 'traffic' || channel === 'server_status';
   });
 };
 

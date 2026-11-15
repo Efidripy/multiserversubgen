@@ -514,7 +514,7 @@ export const App: React.FC = () => {
   };
 
   useWebSocketMessages({
-    channels: role === 'viewer' ? ['snapshot_delta'] : ['inbounds', 'snapshot_delta'],
+    channels: role === 'viewer' ? [] : ['inbounds', 'snapshot_delta'],
     enabled: isAuthenticated,
     onMessage: (msg) => {
       if (msg.type === 'snapshot_delta') {
