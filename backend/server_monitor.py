@@ -13,6 +13,7 @@ from typing import Any, List, Dict
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
+from shared.http_config import get_requests_verify_value
 from xui_session import (
     XUI_FAST_RETRIES,
     XUI_FAST_TIMEOUT_SEC,
@@ -100,11 +101,7 @@ def _format_xray_log_entry(entry: Any) -> str:
 
 
 def _requests_verify_value():
-    if not VERIFY_TLS:
-        return False
-    if CA_BUNDLE_PATH:
-        return CA_BUNDLE_PATH
-    return True
+    return get_requests_verify_value(verify_tls=VERIFY_TLS, ca_bundle_path=CA_BUNDLE_PATH)
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
