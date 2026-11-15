@@ -1,0 +1,1196 @@
+[
+  {
+    "file": "backend/client_manager.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"base_url\" of type \"str\" in function \"_add_client_v3\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/client_manager.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"base_url\" of type \"str\" in function \"_resolve_legacy_trojan_identifier\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 2
+  },
+  {
+    "file": "backend/client_manager.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"session\" of type \"Session\" in function \"xui_request\" Type \"Unknown | None\" is not assignable to type \"Session\" \"None\" is not assignable to \"Session\"",
+    "count": 4
+  },
+  {
+    "file": "backend/client_manager.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, int | str]\" cannot be assigned to parameter \"default\" of type \"Dict[str, int]\" in function \"setdefault\" \"str\" is not assignable to \"int\" Type \"int | str\" is not assignable to type \"int\" \"str\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/client_manager.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str\" cannot be assigned to parameter \"value\" of type \"int\" in function \"__setitem__\" \"str\" is not assignable to \"int\"",
+    "count": 2
+  },
+  {
+    "file": "backend/client_manager.py",
+    "rule": "reportOptionalIterable",
+    "message": "Object of type \"None\" cannot be used as iterable value",
+    "count": 1
+  },
+  {
+    "file": "backend/client_manager.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"get\" is not a known attribute of \"None\"",
+    "count": 6
+  },
+  {
+    "file": "backend/client_manager.py",
+    "rule": "reportReturnType",
+    "message": "Type \"Unknown | None\" is not assignable to return type \"bool\" Type \"Unknown | None\" is not assignable to type \"bool\" \"None\" is not assignable to \"bool\"",
+    "count": 4
+  },
+  {
+    "file": "backend/core/app_runtime_bundle.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | None\" cannot be assigned to parameter \"redis_url\" of type \"str\" in function \"__init__\" Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 2
+  },
+  {
+    "file": "backend/inbound_manager.py",
+    "rule": "reportOptionalIterable",
+    "message": "Object of type \"None\" cannot be used as iterable value",
+    "count": 1
+  },
+  {
+    "file": "backend/integrations/xui/contract_catalog.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Iterable[str] | None\" cannot be assigned to parameter \"args\" of type \"Sequence[str] | None\" in function \"parse_args\" Type \"Iterable[str] | None\" is not assignable to type \"Sequence[str] | None\" Type \"Iterable[str]\" is not assignable to type \"Sequence[str] | None\" \"Iterable[str]\" is not assignable to \"Sequence[str]\" \"Iterable[str]\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/integrations/xui/contract_catalog.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"get\" is not a known attribute of \"None\"",
+    "count": 2
+  },
+  {
+    "file": "backend/main.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | bool\" cannot be assigned to parameter \"verify_tls\" of type \"bool\" in function \"build_app_runtime_bundle\" Type \"str | bool\" is not assignable to type \"bool\" \"str\" is not assignable to \"bool\"",
+    "count": 1
+  },
+  {
+    "file": "backend/main.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"get_cached_telegram_quota_usage\" is not a known attribute of \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/main.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"open\" is not a known attribute of \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/main.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"record_node_snapshots\" is not a known attribute of \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/clients.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | BaseException\" cannot be assigned to parameter \"iterable\" of type \"Iterable[Unknown]\" in function \"extend\" Type \"Unknown | BaseException\" is not assignable to type \"Iterable[Unknown]\" \"BaseException\" is incompatible with protocol \"Iterable[Unknown]\" \"__iter__\" is not present",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/live_data.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"stats\" of type \"Dict[Unknown, Unknown]\" in function \"_coalesce_client_stats\" Type \"Unknown | None\" is not assignable to type \"Dict[Unknown, Unknown]\" \"None\" is not assignable to \"Dict[Unknown, Unknown]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/live_data.py",
+    "rule": "reportArgumentType",
+    "message": "Expression of type \"None\" cannot be assigned to parameter of type \"() -> Dict[Unknown, Unknown]\" Type \"None\" is not assignable to type \"() -> Dict[Unknown, Unknown]\"",
+    "count": 2
+  },
+  {
+    "file": "backend/routers/live_data.py",
+    "rule": "reportArgumentType",
+    "message": "Expression of type \"None\" cannot be assigned to parameter of type \"(str) -> Dict[Unknown, Unknown]\" Type \"None\" is not assignable to type \"(str) -> Dict[Unknown, Unknown]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/live_data.py",
+    "rule": "reportArgumentType",
+    "message": "Expression of type \"None\" cannot be assigned to parameter of type \"(str, str) -> Dict[Unknown, Unknown]\" Type \"None\" is not assignable to type \"(str, str) -> Dict[Unknown, Unknown]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/nodes.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[Literal['id', 'name', 'ip', 'port', 'base_path', 'access_path', 'panel_url', 'scheme'], Any]\" cannot be assigned to parameter \"node\" of type \"Dict[str, Any]\" in function \"build_panel_base_url\" \"dict[Literal['id', 'name', 'ip', 'port', 'base_path', 'access_path', 'panel_url', 'scheme'], Any]\" is not assignable to \"Dict[str, Any]\" Type parameter \"_KT@dict\" is invariant, but \"Literal['id', 'name', 'ip', 'port', 'base_path', 'access_path', 'panel_url', 'scheme']\" is not the same as \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/nodes.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[Literal['id', 'name', 'ip', 'port', 'base_path', 'access_path', 'panel_url', 'scheme'], Unknown]\" cannot be assigned to parameter \"node\" of type \"Dict[str, Any]\" in function \"build_panel_base_url\" \"dict[Literal['id', 'name', 'ip', 'port', 'base_path', 'access_path', 'panel_url', 'scheme'], Unknown]\" is not assignable to \"Dict[str, Any]\" Type parameter \"_KT@dict\" is invariant, but \"Literal['id', 'name', 'ip', 'port', 'base_path', 'access_path', 'panel_url', 'scheme']\" is not the same as \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/nodes.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | None\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__setitem__\" Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/nodes.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | None\" cannot be assigned to parameter of type \"str\" Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/server_ops.py",
+    "rule": "reportArgumentType",
+    "message": "Expression of type \"None\" cannot be assigned to parameter of type \"Dict[Unknown, Unknown]\" \"None\" is not assignable to \"Dict[Unknown, Unknown]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/subscriptions.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | Any | Unknown | None\" cannot be assigned to parameter \"format\" of type \"str\" in function \"convert_links\" Type \"str | Any | Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/subscriptions.py",
+    "rule": "reportAssignmentType",
+    "message": "Type \"None\" is not assignable to declared type \"(body: Unknown) -> None\" Type \"None\" is not assignable to type \"(body: Unknown) -> None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/subscriptions.py",
+    "rule": "reportReturnType",
+    "message": "Type \"tuple[str, Dict[str, int] | None, str]\" is not assignable to return type \"str | None\" Type \"tuple[str, Dict[str, int] | None, str]\" is not assignable to type \"str | None\" \"tuple[str, Dict[str, int] | None, str]\" is not assignable to \"str\" \"tuple[str, Dict[str, int] | None, str]\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"DriftFinding | None\" cannot be assigned to parameter \"obj\" of type \"DataclassInstance\" in function \"asdict\" Type \"DriftFinding | None\" is not assignable to type \"DataclassInstance\" \"None\" is incompatible with protocol \"DataclassInstance\" \"__dataclass_fields__\" is not present",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | Literal['local_proxy'] | None\" cannot be assigned to parameter \"mode\" of type \"str\" in function \"set_transport_preference\" Type \"Unknown | Literal['local_proxy'] | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"body\" of type \"str\" in function \"queue_admin_direct_message\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_customer_version\" of type \"int\" in function \"create_lifecycle_schedule\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_customer_version\" of type \"int\" in function \"queue_customer_node_add\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_customer_version\" of type \"int\" in function \"queue_customer_node_operation\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_customer_version\" of type \"int\" in function \"queue_customer_operation\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_identity_version\" of type \"int\" in function \"adopt_discovered_existing_application\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_job_version\" of type \"int\" in function \"reschedule_provisioning_job\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 3
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_operation_version\" of type \"int\" in function \"reschedule_customer_operation\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 3
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_row_version\" of type \"int\" in function \"adopt_drift_binding\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_row_version\" of type \"int\" in function \"cancel_lifecycle_schedule\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_row_version\" of type \"int\" in function \"resolve_appeal\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_row_version\" of type \"int\" in function \"resolve_drift_finding\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_row_version\" of type \"int\" in function \"resolve_support_request\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_row_version\" of type \"int\" in function \"set_service_notice\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"expected_row_version\" of type \"int\" in function \"set_transport_preference\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"host\" of type \"str\" in function \"build_local_proxy_url\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"adopt_discovered_existing_application\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"create_lifecycle_schedule\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"queue_admin_direct_message\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"queue_bulk_customer_operations\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"queue_customer_node_add\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"queue_customer_node_operation\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"queue_customer_operation\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"reschedule_customer_operation\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 3
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"reschedule_provisioning_job\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 3
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"resolve_appeal\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"resolve_support_request\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"idempotency_key\" of type \"str\" in function \"set_service_notice\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"operation_type\" of type \"str\" in function \"preview_customer_node_operation\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"operation_type\" of type \"str\" in function \"preview_customer_operation\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"operation_type\" of type \"str\" in function \"queue_customer_node_operation\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"operation_type\" of type \"str\" in function \"queue_customer_operation\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"port\" of type \"int\" in function \"build_local_proxy_url\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"status\" of type \"str\" in function \"resolve_appeal\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"status\" of type \"str\" in function \"resolve_drift_finding\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"target_snapshot_digest\" of type \"str\" in function \"create_lifecycle_schedule\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"target_snapshot_digest\" of type \"str\" in function \"queue_customer_node_operation\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/routers/telegram_admin.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"target_snapshot_digest\" of type \"str\" in function \"queue_customer_operation\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/server_monitor.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"int\" in function \"get\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/server_monitor.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, str]\" cannot be assigned to parameter \"retries\" of type \"int | None\" in function \"xui_request\" Type \"dict[str, str]\" is not assignable to type \"int | None\" \"dict[str, str]\" is not assignable to \"int\" \"dict[str, str]\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/server_monitor.py",
+    "rule": "reportCallIssue",
+    "message": "No overloads for \"get\" match the provided arguments",
+    "count": 1
+  },
+  {
+    "file": "backend/server_monitor.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"get\" is not a known attribute of \"None\"",
+    "count": 3
+  },
+  {
+    "file": "backend/services/client_notes.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"object\" is not assignable to type \"ConvertibleToInt\" \"object\" is not assignable to \"str\" \"object\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"object\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"object\" is incompatible with protocol \"SupportsIndex\" \"__index__\" is not present ...",
+    "count": 1
+  },
+  {
+    "file": "backend/services/collector.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToFloat\" in function \"__new__\" Type \"Unknown | None\" is not assignable to type \"ConvertibleToFloat\" Type \"None\" is not assignable to type \"ConvertibleToFloat\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsFloat\" \"__float__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 1
+  },
+  {
+    "file": "backend/services/collector.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"Unknown | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 1
+  },
+  {
+    "file": "backend/services/collector.py",
+    "rule": "reportReturnType",
+    "message": "Type \"None\" is not assignable to return type \"Dict[Unknown, Unknown]\" \"None\" is not assignable to \"Dict[Unknown, Unknown]\"",
+    "count": 2
+  },
+  {
+    "file": "backend/services/inbounds_runtime.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"(node: Unknown) -> (List[Dict[Unknown, Unknown]] | None)\" cannot be assigned to parameter \"value\" of type \"Dict[str, List[Dict[Unknown, Unknown]]] | None\" in function \"__setitem__\" Type \"(node: Unknown) -> (List[Dict[Unknown, Unknown]] | None)\" is not assignable to type \"Dict[str, List[Dict[Unknown, Unknown]]] | None\" \"function\" is not assignable to \"Dict[str, List[Dict[Unknown, Unknown]]]\" \"function\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/inbounds_runtime.py",
+    "rule": "reportOptionalCall",
+    "message": "Object of type \"None\" cannot be called",
+    "count": 2
+  },
+  {
+    "file": "backend/services/live_stats_runtime.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToFloat\" in function \"__new__\" Type \"Unknown | None\" is not assignable to type \"ConvertibleToFloat\" Type \"None\" is not assignable to type \"ConvertibleToFloat\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsFloat\" \"__float__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 2
+  },
+  {
+    "file": "backend/services/live_stats_runtime.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "Cannot access attribute \"inbound_id\" for class \"object\" Attribute \"inbound_id\" is unknown",
+    "count": 1
+  },
+  {
+    "file": "backend/services/live_stats_runtime.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "Cannot access attribute \"node_id\" for class \"object\" Attribute \"node_id\" is unknown",
+    "count": 1
+  },
+  {
+    "file": "backend/services/live_stats_runtime.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"items\" is not a known attribute of \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/live_stats_runtime.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"values\" is not a known attribute of \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/metrics_runtime.py",
+    "rule": "reportOptionalContextManager",
+    "message": "Object of type \"None\" cannot be used with \"with\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/runtime_support.py",
+    "rule": "reportReturnType",
+    "message": "Function with declared return type \"int\" must return value on all code paths \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_client_settings.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Any | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"get\" Type \"Any | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_client_settings.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Any | bool | str\" cannot be assigned to parameter \"value\" of type \"str\" in function \"_validate_url\" Type \"Any | bool | str\" is not assignable to type \"str\" \"bool\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_client_settings.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Any | str | Literal[True]\" cannot be assigned to parameter \"string\" of type \"str\" in function \"fullmatch\" Type \"Any | str | Literal[True]\" is not assignable to type \"str\" \"Literal[True]\" is not assignable to \"str\"",
+    "count": 3
+  },
+  {
+    "file": "backend/services/subscription_client_settings.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Literal[True]\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__setitem__\" \"Literal[True]\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_client_settings.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | int | str\" cannot be assigned to parameter \"value\" of type \"str\" in function \"_validate_url\" Type \"Unknown | int | str\" is not assignable to type \"str\" \"int\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_client_settings.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "Cannot access attribute \"startswith\" for class \"Literal[True]\" Attribute \"startswith\" is unknown",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_client_settings.py",
+    "rule": "reportCallIssue",
+    "message": "No overloads for \"fullmatch\" match the provided arguments",
+    "count": 3
+  },
+  {
+    "file": "backend/services/subscription_client_settings.py",
+    "rule": "reportCallIssue",
+    "message": "No overloads for \"get\" match the provided arguments",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_client_settings.py",
+    "rule": "reportOperatorIssue",
+    "message": "Operator \"-\" not supported for types \"set[Literal['PROXY', 'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE']]\" and \"set[str]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_formats.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, Unknown]\" cannot be assigned to parameter \"value\" of type \"bool\" in function \"__setitem__\" \"dict[str, Unknown]\" is not assignable to \"bool\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_formats.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, Unknown]\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__setitem__\" \"dict[str, Unknown]\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_formats.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, bool | Unknown]\" cannot be assigned to parameter \"value\" of type \"bool\" in function \"__setitem__\" \"dict[str, bool | Unknown]\" is not assignable to \"bool\"",
+    "count": 2
+  },
+  {
+    "file": "backend/services/subscription_formats.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"list[Unknown]\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__setitem__\" \"list[Unknown]\" is not assignable to \"str\"",
+    "count": 2
+  },
+  {
+    "file": "backend/services/subscription_page_themes.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"object\" of type \"_GetItemIterable[_T@iter]\" in function \"iter\" \"object\" is incompatible with protocol \"_GetItemIterable[_T@iter]\" \"__getitem__\" is not present",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_page_themes.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"object\" is not assignable to type \"ConvertibleToInt\" \"object\" is not assignable to \"str\" \"object\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"object\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"object\" is incompatible with protocol \"SupportsIndex\" \"__index__\" is not present ...",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_page_themes.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "Cannot access attribute \"get\" for class \"object\" Attribute \"get\" is unknown",
+    "count": 2
+  },
+  {
+    "file": "backend/services/subscription_page_themes.py",
+    "rule": "reportCallIssue",
+    "message": "No overloads for \"iter\" match the provided arguments",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_page_themes.py",
+    "rule": "reportGeneralTypeIssues",
+    "message": "\"object\" is not iterable \"__iter__\" method not defined",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_remote_rules.py",
+    "rule": "reportGeneralTypeIssues",
+    "message": "Expected mapping for dictionary unpack operator",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_remote_rules.py",
+    "rule": "reportOptionalIterable",
+    "message": "Object of type \"None\" cannot be used as iterable value",
+    "count": 3
+  },
+  {
+    "file": "backend/services/subscription_remote_rules.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"append\" is not a known attribute of \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_remote_rules.py",
+    "rule": "reportOptionalOperand",
+    "message": "Operator \"+\" not supported for \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_remote_rules.py",
+    "rule": "reportPossiblyUnboundVariable",
+    "message": "\"response\" is possibly unbound",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_xray_json.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"get\" is not a known attribute of \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/subscription_xray_json.py",
+    "rule": "reportOptionalSubscript",
+    "message": "Object of type \"None\" is not subscriptable",
+    "count": 2
+  },
+  {
+    "file": "backend/services/telegram_bot_config.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"object\" is not assignable to type \"ConvertibleToInt\" \"object\" is not assignable to \"str\" \"object\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"object\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"object\" is incompatible with protocol \"SupportsIndex\" \"__index__\" is not present ...",
+    "count": 2
+  },
+  {
+    "file": "backend/services/telegram_delivery.py",
+    "rule": "reportReturnType",
+    "message": "Type \"int | None\" is not assignable to return type \"int\" Type \"int | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_drift.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Any | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"Any | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_drift.py",
+    "rule": "reportOperatorIssue",
+    "message": "Operator \"not in\" not supported for types \"Literal[1]\" and \"Unknown | list[Unknown] | None\" Operator \"not in\" not supported for types \"Literal[1]\" and \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_lifecycle.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, Any] | None\" cannot be assigned to parameter \"node\" of type \"dict[str, Any]\" in function \"_delete_client\" Type \"dict[str, Any] | None\" is not assignable to type \"dict[str, Any]\" \"None\" is not assignable to \"dict[str, Any]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_lifecycle.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, Any] | None\" cannot be assigned to parameter \"node\" of type \"dict[str, Any]\" in function \"_find_exact\" Type \"dict[str, Any] | None\" is not assignable to type \"dict[str, Any]\" \"None\" is not assignable to \"dict[str, Any]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_lifecycle.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, Any] | None\" cannot be assigned to parameter \"node\" of type \"dict[str, Any]\" in function \"_set_enabled\" Type \"dict[str, Any] | None\" is not assignable to type \"dict[str, Any]\" \"None\" is not assignable to \"dict[str, Any]\"",
+    "count": 2
+  },
+  {
+    "file": "backend/services/telegram_outbox.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"get\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_provisioning.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, Any] | None\" cannot be assigned to parameter \"node\" of type \"dict[str, Any]\" in function \"_adopt_or_fail\" Type \"dict[str, Any] | None\" is not assignable to type \"dict[str, Any]\" \"None\" is not assignable to \"dict[str, Any]\"",
+    "count": 2
+  },
+  {
+    "file": "backend/services/telegram_provisioning.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, Any] | None\" cannot be assigned to parameter \"node\" of type \"dict[str, Any]\" in function \"_find_matches\" Type \"dict[str, Any] | None\" is not assignable to type \"dict[str, Any]\" \"None\" is not assignable to \"dict[str, Any]\"",
+    "count": 2
+  },
+  {
+    "file": "backend/services/telegram_provisioning.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, Any] | None\" cannot be assigned to parameter \"node\" of type \"dict[str, Any]\" in function \"add_client\" Type \"dict[str, Any] | None\" is not assignable to type \"dict[str, Any]\" \"None\" is not assignable to \"dict[str, Any]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_provisioning.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"dict[str, Any] | None\" cannot be assigned to parameter \"node\" of type \"dict[str, Any]\" in function \"supports_fixed_contract\" Type \"dict[str, Any] | None\" is not assignable to type \"dict[str, Any]\" \"None\" is not assignable to \"dict[str, Any]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_provisioning.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_provisioning.py",
+    "rule": "reportOperatorIssue",
+    "message": "Operator \"not in\" not supported for types \"Literal[1]\" and \"Unknown | list[Unknown] | None\" Operator \"not in\" not supported for types \"Literal[1]\" and \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_provisioning.py",
+    "rule": "reportOperatorIssue",
+    "message": "Operator \"not in\" not supported for types \"int\" and \"Unknown | list[Unknown] | None\" Operator \"not in\" not supported for types \"int\" and \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_qr.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "\"constants\" is not a known attribute of module \"qrcode\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"list[str | None]\" cannot be assigned to parameter \"identifiers\" of type \"Iterable[str]\" in function \"ensure_tokens\" Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 3
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"list[tuple[str, str | None]]\" cannot be assigned to parameter \"targets\" of type \"Iterable[tuple[str, str]]\" in function \"regenerate_tokens\" \"list[tuple[str, str | None]]\" is not assignable to \"Iterable[tuple[str, str]]\" Type parameter \"_T_co@Iterable\" is covariant, but \"tuple[str, str | None]\" is not a subtype of \"tuple[str, str]\" \"tuple[str, str | None]\" is not assignable to \"tuple[str, str]\" Tuple entry 2 is incorrect type Type \"str | None\" is not assignable to type \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | None\" cannot be assigned to parameter \"email\" of type \"str\" in function \"has_confirmed_enabled_subscription_binding\" Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | None\" cannot be assigned to parameter \"email\" of type \"str\" in function \"safe_subscription_node_ids\" Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | None\" cannot be assigned to parameter \"identifier\" of type \"str\" in function \"regenerate_token\" Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"get\" Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | None\" cannot be assigned to parameter of type \"str\" Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"tuple[Literal['email', 'telegram_device'], str | None]\" cannot be assigned to parameter \"key\" of type \"tuple[str, str]\" in function \"__getitem__\" \"tuple[Literal['email', 'telegram_device'], str | None]\" is not assignable to \"tuple[str, str]\" Tuple entry 2 is incorrect type Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportAssignmentType",
+    "message": "Expression with type \"tuple[int, int, str, dict[str, Any] | None]\" cannot be assigned to target tuple Type \"tuple[int, int, str, dict[str, Any] | None]\" is incompatible with target tuple Tuple size mismatch; expected 5 but received 4",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"get\" is not a known attribute of \"None\"",
+    "count": 2
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportOptionalSubscript",
+    "message": "Object of type \"None\" is not subscriptable",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportPossiblyUnboundVariable",
+    "message": "\"details\" is possibly unbound",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registration.py",
+    "rule": "reportPossiblyUnboundVariable",
+    "message": "\"prefix\" is possibly unbound",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"value\" of type \"int\" in function \"_positive_int\" Type \"Unknown | None\" is not assignable to type \"int\" \"None\" is not assignable to \"int\"",
+    "count": 3
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"value\" of type \"str\" in function \"_nonempty\" Type \"Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | str | tuple[()] | None\" cannot be assigned to parameter \"created_at\" of type \"str\" in function \"__init__\" Type \"Unknown | str | tuple[()] | None\" is not assignable to type \"str\" \"tuple[()]\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | str | tuple[()] | None\" cannot be assigned to parameter \"created_by\" of type \"str\" in function \"__init__\" Type \"Unknown | str | tuple[()] | None\" is not assignable to type \"str\" \"tuple[()]\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | str | tuple[()] | None\" cannot be assigned to parameter \"customer_email\" of type \"str\" in function \"__init__\" Type \"Unknown | str | tuple[()] | None\" is not assignable to type \"str\" \"tuple[()]\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | str | tuple[()] | None\" cannot be assigned to parameter \"customer_id\" of type \"int | None\" in function \"__init__\" Type \"Unknown | str | tuple[()] | None\" is not assignable to type \"int | None\" Type \"str\" is not assignable to type \"int | None\" \"str\" is not assignable to \"int\" \"str\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | str | tuple[()] | None\" cannot be assigned to parameter \"email_source\" of type \"str | None\" in function \"__init__\" Type \"Unknown | str | tuple[()] | None\" is not assignable to type \"str | None\" Type \"tuple[()]\" is not assignable to type \"str | None\" \"tuple[()]\" is not assignable to \"str\" \"tuple[()]\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | str | tuple[()] | None\" cannot be assigned to parameter \"profile_kind\" of type \"str\" in function \"__init__\" Type \"Unknown | str | tuple[()] | None\" is not assignable to type \"str\" \"tuple[()]\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | str | tuple[()] | None\" cannot be assigned to parameter \"row_version\" of type \"int\" in function \"__init__\" Type \"Unknown | str | tuple[()] | None\" is not assignable to type \"int\" \"str\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | str | tuple[()] | None\" cannot be assigned to parameter \"target_node_ids\" of type \"tuple[int, ...]\" in function \"__init__\" Type \"Unknown | str | tuple[()] | None\" is not assignable to type \"tuple[int, ...]\" \"str\" is not assignable to \"tuple[int, ...]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | str | tuple[()] | None\" cannot be assigned to parameter \"target_snapshot_digest\" of type \"str | None\" in function \"__init__\" Type \"Unknown | str | tuple[()] | None\" is not assignable to type \"str | None\" Type \"tuple[()]\" is not assignable to type \"str | None\" \"tuple[()]\" is not assignable to \"str\" \"tuple[()]\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Unknown | str | tuple[()] | None\" cannot be assigned to parameter \"telegram_user_id\" of type \"int\" in function \"__init__\" Type \"Unknown | str | tuple[()] | None\" is not assignable to type \"int\" \"str\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 25
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"value\" of type \"str\" in function \"_nonempty\" \"object\" is not assignable to \"str\"",
+    "count": 9
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"object\" is not assignable to type \"ConvertibleToInt\" \"object\" is not assignable to \"str\" \"object\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"object\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"object\" is incompatible with protocol \"SupportsIndex\" \"__index__\" is not present ...",
+    "count": 4
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"tuple[CustomerOperationPreview, tuple[dict[str, Any], ...], str]\" cannot be assigned to parameter \"object\" of type \"tuple[CustomerOperationPreview, list[dict[str, Any]], str]\" in function \"append\" \"tuple[dict[str, Any], ...]\" is not assignable to \"list[dict[str, Any]]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"tuple[int, int, int, str, str | None, str | None]\" cannot be assigned to parameter \"object\" of type \"tuple[int, int, str, str | None]\" in function \"append\" \"int\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"tuple[int, int, str, dict[Unknown, Unknown] | None, tuple[Any, ...] | None]\" cannot be assigned to parameter \"object\" of type \"tuple[int, int, str, dict[str, Any] | None]\" in function \"append\" \"tuple[int, int, str, dict[Unknown, Unknown] | None, tuple[Any, ...] | None]\" is not assignable to \"tuple[int, int, str, dict[str, Any] | None]\" Tuple size mismatch; expected 4 but received 5",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportCallIssue",
+    "message": "No overloads for \"sum\" match the provided arguments",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"isoformat\" is not a known attribute of \"None\"",
+    "count": 2
+  },
+  {
+    "file": "backend/services/telegram_transport.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"CaseInsensitiveDict[str]\" cannot be assigned to parameter \"hdrs\" of type \"Message[str, str]\" in function \"__init__\" \"CaseInsensitiveDict[str]\" is not assignable to \"Message[str, str]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_transport.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Literal[False]\" cannot be assigned to parameter \"allowed_methods\" of type \"Collection[str] | None\" in function \"__init__\" Type \"Literal[False]\" is not assignable to type \"Collection[str] | None\" \"Literal[False]\" is incompatible with protocol \"Collection[str]\" \"__len__\" is not present \"__iter__\" is not present \"__contains__\" is not present \"Literal[False]\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_transport.py",
+    "rule": "reportPossiblyUnboundVariable",
+    "message": "\"response\" is possibly unbound",
+    "count": 8
+  },
+  {
+    "file": "backend/services/traffic_comparison.py",
+    "rule": "reportOptionalOperand",
+    "message": "Operator \"-\" not supported for \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/shared/security.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"object\" is not assignable to type \"ConvertibleToInt\" \"object\" is not assignable to \"str\" \"object\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"object\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"object\" is incompatible with protocol \"SupportsIndex\" \"__index__\" is not present ...",
+    "count": 1
+  },
+  {
+    "file": "backend/shared/security.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "Cannot access attribute \"is_link_local\" for class \"_BaseAddress\" Attribute \"is_link_local\" is unknown",
+    "count": 1
+  },
+  {
+    "file": "backend/shared/security.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "Cannot access attribute \"is_loopback\" for class \"_BaseAddress\" Attribute \"is_loopback\" is unknown",
+    "count": 1
+  },
+  {
+    "file": "backend/shared/security.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "Cannot access attribute \"is_multicast\" for class \"_BaseAddress\" Attribute \"is_multicast\" is unknown",
+    "count": 1
+  },
+  {
+    "file": "backend/shared/security.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "Cannot access attribute \"is_private\" for class \"_BaseAddress\" Attribute \"is_private\" is unknown",
+    "count": 1
+  },
+  {
+    "file": "backend/shared/security.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "Cannot access attribute \"is_reserved\" for class \"_BaseAddress\" Attribute \"is_reserved\" is unknown",
+    "count": 1
+  },
+  {
+    "file": "backend/shared/security.py",
+    "rule": "reportAttributeAccessIssue",
+    "message": "Cannot access attribute \"is_unspecified\" for class \"_BaseAddress\" Attribute \"is_unspecified\" is unknown",
+    "count": 1
+  },
+  {
+    "file": "backend/websocket_manager.py",
+    "rule": "reportArgumentType",
+    "message": "Expression of type \"None\" cannot be assigned to parameter of type \"str\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"Response | None\" cannot be assigned to parameter \"response\" of type \"Response\" in function \"_response_shape\" Type \"Response | None\" is not assignable to type \"Response\" \"None\" is not assignable to \"Response\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"_Verify | None\" cannot be assigned to parameter \"verify\" of type \"bool | str\" in function \"send\" Type \"_Verify | None\" is not assignable to type \"bool | str\" Type \"None\" is not assignable to type \"bool | str\" \"None\" is not assignable to \"bool\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"bool | str | None\" cannot be assigned to parameter \"verify\" of type \"bool | str\" in function \"build_connection_pool_key_attributes\" Type \"bool | str | None\" is not assignable to type \"bool | str\" Type \"None\" is not assignable to type \"bool | str\" \"None\" is not assignable to \"bool\" \"None\" is not assignable to \"str\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"_proxy\" of type \"Url | None\" in function \"__init__\" Type \"object\" is not assignable to type \"Url | None\" \"object\" is not assignable to \"Url\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"_proxy_config\" of type \"ProxyConfig | None\" in function \"__init__\" Type \"object\" is not assignable to type \"ProxyConfig | None\" \"object\" is not assignable to \"ProxyConfig\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"_proxy_headers\" of type \"Mapping[str, str] | None\" in function \"__init__\" Type \"object\" is not assignable to type \"Mapping[str, str] | None\" \"object\" is not assignable to \"Mapping[str, str]\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"assert_fingerprint\" of type \"str | None\" in function \"__init__\" Type \"object\" is not assignable to type \"str | None\" \"object\" is not assignable to \"str\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"assert_hostname\" of type \"str | Literal[False] | None\" in function \"__init__\" Type \"object\" is not assignable to type \"str | Literal[False] | None\" \"object\" is not assignable to \"str\" \"object\" is not assignable to \"None\" \"object\" is not assignable to \"Literal[False]\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"block\" of type \"bool\" in function \"__init__\" \"object\" is not assignable to \"bool\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"ca_cert_dir\" of type \"str | None\" in function \"__init__\" Type \"object\" is not assignable to type \"str | None\" \"object\" is not assignable to \"str\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"ca_certs\" of type \"str | None\" in function \"__init__\" Type \"object\" is not assignable to type \"str | None\" \"object\" is not assignable to \"str\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"cert_file\" of type \"str | None\" in function \"__init__\" Type \"object\" is not assignable to type \"str | None\" \"object\" is not assignable to \"str\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"cert_reqs\" of type \"int | str | None\" in function \"__init__\" Type \"object\" is not assignable to type \"int | str | None\" \"object\" is not assignable to \"int\" \"object\" is not assignable to \"str\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"headers\" of type \"Mapping[str, str] | None\" in function \"__init__\" Type \"object\" is not assignable to type \"Mapping[str, str] | None\" \"object\" is not assignable to \"Mapping[str, str]\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"key_file\" of type \"str | None\" in function \"__init__\" Type \"object\" is not assignable to type \"str | None\" \"object\" is not assignable to \"str\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"key_password\" of type \"str | None\" in function \"__init__\" Type \"object\" is not assignable to type \"str | None\" \"object\" is not assignable to \"str\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"maxsize\" of type \"int\" in function \"__init__\" \"object\" is not assignable to \"int\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"retries\" of type \"Retry | bool | int | None\" in function \"__init__\" Type \"object\" is not assignable to type \"Retry | bool | int | None\" \"object\" is not assignable to \"Retry\" \"object\" is not assignable to \"bool\" \"object\" is not assignable to \"int\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"ssl_maximum_version\" of type \"TLSVersion | None\" in function \"__init__\" Type \"object\" is not assignable to type \"TLSVersion | None\" \"object\" is not assignable to \"TLSVersion\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"ssl_minimum_version\" of type \"TLSVersion | None\" in function \"__init__\" Type \"object\" is not assignable to type \"TLSVersion | None\" \"object\" is not assignable to \"TLSVersion\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"ssl_version\" of type \"int | str | None\" in function \"__init__\" Type \"object\" is not assignable to type \"int | str | None\" \"object\" is not assignable to \"int\" \"object\" is not assignable to \"str\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"timeout\" of type \"_TYPE_TIMEOUT\" in function \"__init__\" Type \"object\" is not assignable to type \"_TYPE_TIMEOUT\" \"object\" is not assignable to \"Timeout\" \"object\" is not assignable to \"float\" \"object\" is not assignable to \"_TYPE_DEFAULT\" \"object\" is not assignable to \"None\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"str | None\" cannot be assigned to parameter \"url\" of type \"_Uri\" in function \"select_proxy\" Type \"str | None\" is not assignable to type \"_Uri\" Type \"None\" is not assignable to type \"_Uri\" \"None\" is not assignable to \"str\" \"None\" is not assignable to \"bytes\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"tuple[float, float]\" cannot be assigned to parameter \"timeout\" of type \"float\" in function \"_pinned_session_request\" \"tuple[float, float]\" is not assignable to \"float\"",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportAssignmentType",
+    "message": "Type \"ConnectionCls\" is not assignable to declared type \"type[BaseHTTPConnection] | type[BaseHTTPSConnection]\" Type \"type[_PinnedHTTPConnection]\" is not assignable to type \"type[BaseHTTPConnection] | type[BaseHTTPSConnection]\" \"_PinnedHTTPConnection\" is incompatible with protocol \"BaseHTTPConnection\" Type \"type[_PinnedHTTPConnection]\" is not assignable to type \"type[BaseHTTPConnection]\" \"host\" is invariant because it is mutable \"host\" is an incompatible type \"property\" is not assignable to \"str\" \"__init__\" is an incompatible type Type \"(..., pinned_address: str) -> None\" is not assignable to type \"(host: str, port: int | None = None, *, timeout: _TYPE_TIMEOUT = _DEFAULT_TIMEOUT, source_address: tuple[str, int] | None = None, blocksize: int = 8192, socket_options: _TYPE_SOCKET_OPTIONS | None = ..., proxy: Url | None = None, proxy_config: ProxyConfig | None = None) -> None\" ...",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportAssignmentType",
+    "message": "Type \"ConnectionCls\" is not assignable to declared type \"type[BaseHTTPSConnection]\" \"_PinnedHTTPSConnection\" is incompatible with protocol \"BaseHTTPSConnection\" Type \"type[_PinnedHTTPSConnection]\" is not assignable to type \"type[BaseHTTPSConnection]\" \"default_port\" is defined as a ClassVar in protocol \"assert_hostname\" is invariant because it is mutable \"assert_hostname\" is an incompatible type Type \"str | bool | None\" is not assignable to type \"str | Literal[False] | None\" Type \"bool\" is not assignable to type \"str | Literal[False] | None\" \"bool\" is not assignable to \"None\" ...",
+    "count": 1
+  },
+  {
+    "file": "backend/xui_session.py",
+    "rule": "reportOptionalSubscript",
+    "message": "Object of type \"None\" is not subscriptable",
+    "count": 4
+  }
+]

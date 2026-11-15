@@ -19,3 +19,13 @@
 - [Telegram: безопасность и staging rollout](TELEGRAM_BOT_SECURITY.md)
 - [Telegram: staging runbook](TELEGRAM_STAGING_RUNBOOK.md)
 - [Telegram: опциональный локальный VLESS transport](TELEGRAM_LOCAL_VLESS_TRANSPORT.md)
+
+## Backend CI: pyright baseline
+
+Backend CI checks pyright errors against `backend/.pyright-baseline.json`. After fixing errors, install the backend development requirements in a Python 3.12 environment and run from the repository root:
+
+```sh
+python scripts/ci/check-pyright-baseline.py --update-baseline -- npx --yes pyright@1.1.414
+```
+
+Review the baseline diff and include it with the fix. Use the same pinned pyright version as CI.
