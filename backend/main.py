@@ -203,6 +203,7 @@ node_metric_labels_lock = runtime_state.node_metric_labels_lock
 metrics_runtime = None
 live_stats_runtime = None
 telegram_traffic_reconciler = None
+subscription_refresh_window = None
 
 
 def _on_snapshots(snapshots: list[dict]) -> None:
@@ -212,6 +213,8 @@ def _on_snapshots(snapshots: list[dict]) -> None:
     metrics_runtime.record_node_snapshots(snapshots)
     for snapshot in snapshots:
         _persist_node_version(snapshot)
+    if subscription_refresh_window is not None:
+        subscription_refresh_window.on_snapshots()
     if inbounds_runtime is not None:
         try:
             # The collector already owns these full DTOs. Exclude nodes that
@@ -454,6 +457,7 @@ def check_web_session(request: Request):
     db_path=DB_PATH,
     client_manager=client_mgr,
 )
+subscription_refresh_window = subscription_links_service.SubscriptionRefreshWindow(invalidate_subscription_cache)
 get_subscription_userinfo = subscription_links_service.get_subscription_userinfo
 get_system_emails = subscription_links_service.get_system_emails
 
@@ -600,6 +604,10 @@ async def _telegram_provisioning_worker_loop(worker_tracker) -> None:
         # A finite sleep also gives cancellation a predictable safe point and
         # prevents a busy loop when a fleet contains many fast local attempts.
         worker_health.mark_success("telegram.provisioning")
+        if provisioning_result.processed or lifecycle_result.processed:
+            # Bot writes changed a panel: re-poll now so the subscription shows it in seconds, not minutes.
+            subscription_refresh_window.open()
+            await snapshot_collector.force_poll_all()
         if not await worker_tracker.wait_or_stop(
             0.1
             if schedule_result.processed
