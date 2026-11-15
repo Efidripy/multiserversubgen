@@ -3,6 +3,7 @@
 Статус системы, core service-процесса, проверка доступности
 """
 import requests
+import json
 import logging
 import base64
 from urllib.parse import quote
@@ -102,6 +103,25 @@ def _format_xray_log_entry(entry: Any) -> str:
 
 def _requests_verify_value():
     return get_requests_verify_value(verify_tls=VERIFY_TLS, ca_bundle_path=CA_BUNDLE_PATH)
+
+
+# shortcut: the cap is per node; /backup/all still holds every node's copy in memory, stream it if fleets grow.
+MAX_NODE_BACKUP_BYTES = int(os.getenv("MAX_NODE_BACKUP_BYTES", str(256 * 1024 * 1024)))
+
+
+def _read_capped_body(response, limit: int) -> bytes:
+    """Read a streamed response body, refusing anything larger than *limit*."""
+    declared = str(response.headers.get("Content-Length") or "")
+    if declared.isdigit() and int(declared) > limit:
+        raise ValueError("backup is too large")
+    chunks: List[bytes] = []
+    total = 0
+    for chunk in response.iter_content(65536):
+        total += len(chunk)
+        if total > limit:
+            raise ValueError("backup is too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -845,15 +865,20 @@ class ServerMonitor:
         
         try:
             # 3x-ui modern endpoint: /panel/api/server/getDb
-            res = xui_request(s, "GET", f"{base_url}/panel/api/server/getDb", timeout=15)
+            res = xui_request(s, "GET", f"{base_url}/panel/api/server/getDb", timeout=15, stream=True)
             if res.status_code in (404, 405):
                 # fallback for old panels
-                res = xui_request(s, "GET", f"{base_url}/server/getDb", timeout=15)
+                res.close()
+                res = xui_request(s, "GET", f"{base_url}/server/getDb", timeout=15, stream=True)
             
             if res.status_code == 200:
+                try:
+                    body = _read_capped_body(res, MAX_NODE_BACKUP_BYTES)
+                finally:
+                    res.close()
                 # Response can be binary file or JSON wrapper with base64 payload.
                 try:
-                    data = res.json()
+                    data = json.loads(body)
                     if data.get("success"):
                         obj = data.get("obj", "")
                         if isinstance(obj, str):
@@ -870,7 +895,7 @@ class ServerMonitor:
                     # Binary response: keep as base64 to preserve bytes safely.
                     return {
                         "node": node["name"],
-                        "backup_b64": base64.b64encode(res.content).decode("ascii"),
+                        "backup_b64": base64.b64encode(body).decode("ascii"),
                         "encoding": "base64",
                         "timestamp": datetime.now().isoformat()
                     }
