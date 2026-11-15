@@ -1,0 +1,24 @@
+[Unit]
+Description=Sub-Manager PAM helper
+After=sub-manager-pam.socket
+Requires=sub-manager-pam.socket
+
+[Service]
+StandardInput=socket
+ExecStart=/usr/bin/python3 /usr/local/lib/sub-manager-pam/sub_manager_pam.py --uid __PROJECT_UID__ --pam-service login
+User=root
+NoNewPrivileges=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallFilter=@system-service
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_AUDIT_WRITE
+ReadWritePaths=-/var/lib/faillock -/run/faillock
+Restart=no
+

@@ -112,7 +112,12 @@ function New-Archive {
         "$leaf/monitoring/promtail/promtail-journal-scrape.yml",
         "$leaf/monitoring/grafana/sub-manager-dashboard.json",
         "$leaf/monitoring/grafana/adguard-overview-dashboard.json",
-        "$leaf/systemd/sub-manager.service"
+        "$leaf/systemd/sub-manager.service",
+        "$leaf/systemd/sub-manager-pam.socket",
+        "$leaf/systemd/sub-manager-pam@.service",
+        "$leaf/systemd/sub-manager-pam-tmpfiles.conf",
+        "$leaf/scripts/pam/sub_manager_pam.py",
+        "$leaf/scripts/installer/lib/pam_helper.sh"
     )
     $archiveEntries = @(& tar.exe -tzf $ArchivePath)
     if ($LASTEXITCODE -ne 0) {
