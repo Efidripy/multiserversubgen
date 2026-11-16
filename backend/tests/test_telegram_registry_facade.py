@@ -18,6 +18,14 @@ EXPECTED_TRANSFERRED_SIGNATURES.update({
     'list_customer_traffic_observation_bindings': "(self) -> 'dict[int, tuple[CustomerTrafficObservationBinding, ...]]'",
     'observe_customer_traffic_bindings': "(self, observations: 'dict[int, dict[tuple[int, int], int]]') -> 'tuple[CustomerTrafficLedger, ...]'",
     'get_customer_traffic': "(self, customer_id: 'int') -> 'CustomerTrafficLedger'",
+    'submit_suspended_appeal': "(self, *, telegram_user_id: 'int', body: 'str') -> 'AppealResult'",
+    'list_appeals': "(self, *, status: 'str' = 'open', limit: 'int' = 100) -> 'list[AppealAdminItem]'",
+    'resolve_appeal': "(self, *, appeal_id: 'int', expected_row_version: 'int', status: 'str', idempotency_key: 'str', resolved_by: 'str') -> 'AppealResolutionResult'",
+    'begin_support_request': "(self, *, telegram_user_id: 'int', category: 'str') -> 'None'",
+    'submit_pending_support_request': "(self, *, telegram_user_id: 'int', body: 'str') -> 'TelegramSupportRequest | None'",
+    'list_support_requests': "(self, *, status: 'str' = 'open', limit: 'int' = 100) -> 'list[TelegramSupportRequest]'",
+    'list_customer_support_requests': "(self, customer_id: 'int', *, limit: 'int' = 20) -> 'list[TelegramSupportRequest]'",
+    'resolve_support_request': "(self, *, support_request_id: 'int', expected_row_version: 'int', response: 'str | None', idempotency_key: 'str', resolved_by: 'str') -> 'TelegramSupportResolution'",
 })
 
 
