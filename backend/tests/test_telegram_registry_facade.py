@@ -72,6 +72,18 @@ EXPECTED_TRANSFERRED_SIGNATURES.update({
 })
 
 EXPECTED_TRANSFERRED_SIGNATURES.update({
+    '_node_bulk_action': "(value: 'str') -> 'str'",
+    '_node_bulk_action_snapshot': "(self, conn: 'sqlite3.Connection', *, node_id: 'int', action: 'str', page: 'int') -> 'tuple[NodeBulkActionPreview, tuple[dict[str, Any], ...]]'",
+    'preview_node_bulk_action': "(self, *, node_id: 'int', action: 'str', page: 'int' = 0) -> 'NodeBulkActionPreview'",
+    'begin_node_bulk_action_preview': "(self, *, admin_telegram_user_id: 'int', node_id: 'int', action: 'str', page: 'int') -> 'NodeBulkActionPreview'",
+    'clear_node_bulk_action_preview': "(self, admin_telegram_user_id: 'int') -> 'None'",
+    'queue_node_bulk_action': "(self, *, admin_telegram_user_id: 'int', node_id: 'int', action: 'str', idempotency_key: 'str', created_by: 'str') -> 'NodeBulkActionQueueResult'",
+    '_customer_node_state_counts': "(conn: 'sqlite3.Connection', customer_ids: 'Iterable[int]') -> 'dict[int, dict[str, int]]'",
+    'customer_node_matrix': "(self, customer_id: 'int') -> 'list[CustomerNodeMatrixRow]'",
+    'queue_customer_node_add': "(self, *, customer_id: 'int', node_id: 'int', expected_customer_version: 'int', idempotency_key: 'str', created_by: 'str') -> 'NodeProvisioningQueueResult'",
+})
+
+EXPECTED_TRANSFERRED_SIGNATURES.update({
     'create_guest_subscription_link': "(self, *, telegram_user_id: 'int', duration_hours: 'int') -> 'TelegramGuestSubscriptionLink'",
     'resolve_guest_subscription_link': "(self, token: 'str') -> 'TelegramGuestSubscriptionLink | None'",
     'get_guest_subscription_link': "(self, *, telegram_user_id: 'int', guest_link_id: 'int') -> 'TelegramGuestSubscriptionLink'",
