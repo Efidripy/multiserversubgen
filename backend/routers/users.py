@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover - production runs on Linux
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from services.db_bootstrap import connect
 
 
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -28,6 +29,10 @@ RoleSet = Set[str] | Callable[[], Set[str]] | None
 
 class RoleBody(BaseModel):
     role: str
+
+
+class NoteBody(BaseModel):
+    note: str
 
 
 def build_users_router(
@@ -86,10 +91,16 @@ def build_users_router(
         actor = actor_or_unauthorized(request)
         admins, operators, owners = current_role_sets()
         env_users = admins | operators | owners
-        users = {username: env_record(username, admins, operators, owners) for username in env_users}
+        users = {
+            username: env_record(username, admins, operators, owners)
+            for username in env_users
+            if not panel_roles.is_blocked(username)
+        }
         for row in panel_roles.list_roles():
             username = row["username"]
             if username in owners:
+                continue
+            if panel_roles.is_blocked(username):
                 continue
             configured_role = env_role(username, admins, operators)
             users[username] = {
@@ -101,6 +112,7 @@ def build_users_router(
             }
         for user in users.values():
             user["locked"] = user["owner"] or user["username"] == actor
+            user["note"] = panel_roles.get_note(user["username"])
         ordered = sorted(
             users.values(),
             key=lambda item: (
@@ -109,8 +121,11 @@ def build_users_router(
             ),
         )
         candidates = []
+        blocked = set()
+        with connect(panel_roles.db_path) as conn:
+            blocked = {row[0] for row in conn.execute("SELECT username FROM panel_user_blocks")}
         for entry in pwd.getpwall():
-            if 1000 <= entry.pw_uid <= 59999 and entry.pw_name not in users and USERNAME_RE.fullmatch(entry.pw_name):
+            if 1000 <= entry.pw_uid <= 59999 and (entry.pw_name not in users or entry.pw_name in blocked) and USERNAME_RE.fullmatch(entry.pw_name):
                 candidates.append(entry.pw_name)
         return {
             "users": ordered,
@@ -142,6 +157,32 @@ def build_users_router(
             }
         )
         return {"username": username, "role": body.role, "source": "db"}
+
+    @router.delete("/api/v1/users/{username}")
+    def remove_user(username: str, request: Request):
+        actor = actor_or_unauthorized(request)
+        validate_username(username)
+        _, _, owners = current_role_sets()
+        if username in owners or username == actor:
+            raise HTTPException(status_code=409, detail="User cannot be removed")
+        try:
+            pwd.getpwnam(username)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="System user not found") from None
+        old_role = panel_roles.get_role(username) or env_role(username, *current_role_sets()[:2])
+        removed = panel_roles.remove_user(username, actor)
+        enqueue_audit_event({"event": "panel_user_removed", "actor": actor, "target": username, "old_role": old_role})
+        return {"username": username, "removed": removed, "blocked": True}
+
+    @router.put("/api/v1/users/{username}/note")
+    def update_note(username: str, body: NoteBody, request: Request):
+        actor = actor_or_unauthorized(request)
+        validate_username(username)
+        note = body.note.strip()
+        if len(note) > 200:
+            raise HTTPException(status_code=422, detail="Note must be at most 200 characters")
+        panel_roles.set_note(username, note, actor)
+        return {"username": username, "note": note}
 
     @router.delete("/api/v1/users/{username}/role")
     def delete_user_role(username: str, request: Request):

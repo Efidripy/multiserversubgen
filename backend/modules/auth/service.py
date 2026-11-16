@@ -74,6 +74,7 @@ class AuthService:
         mfa_totp_enabled: bool = False,
         mfa_totp_users: Optional[Dict[str, str]] = None,
         role_lookup: Optional[Callable[[str], Optional[str]]] = None,
+        blocked_lookup: Optional[Callable[[str], bool]] = None,
     ) -> None:
         self.role_operators: Set[str] = role_operators or set()
         self.role_admins: Set[str] = role_admins or set()
@@ -84,6 +85,7 @@ class AuthService:
         self.mfa_totp_enabled = mfa_totp_enabled
         self.mfa_totp_users: Dict[str, str] = mfa_totp_users or {}
         self.role_lookup = role_lookup
+        self.blocked_lookup = blocked_lookup
         self._role_cache: Dict[str, Tuple[float, str]] = {}
         self._role_cache_lock = Lock()
         self._role_cache_generation = 0
@@ -100,6 +102,12 @@ class AuthService:
         """
         if self.is_owner(username):
             return "admin"
+        if self.blocked_lookup is not None:
+            try:
+                if self.blocked_lookup(username):
+                    return "blocked"
+            except Exception:
+                logger.exception("Blocked-user lookup failed for %s", username)
         env_role = "admin" if username in self.role_admins else (
             "operator" if username in self.role_operators else "viewer"
         )

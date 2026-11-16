@@ -153,6 +153,19 @@ def init_db(db_path: str) -> None:
                       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS panel_user_blocks
+                     (username TEXT PRIMARY KEY,
+                      blocked_by TEXT NOT NULL,
+                      blocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS panel_user_notes
+                     (username TEXT PRIMARY KEY,
+                      note TEXT NOT NULL DEFAULT '',
+                      updated_by TEXT NOT NULL,
+                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS nodes
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       name TEXT,

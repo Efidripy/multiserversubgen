@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { deleteUserRole, listUsers, updateUserRole, type ManagedUser, type UserRole } from '../api/users';
+import { listUsers, removeUser, updateUserNote, updateUserRole, type ManagedUser, type UserRole } from '../api/users';
 import { ChoiceChips } from './ChoiceChips';
 import { SelectMenu } from './SelectMenu';
 
@@ -33,6 +33,8 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
   const [confirming, setConfirming] = useState<string | null>(null);
   const [candidate, setCandidate] = useState('');
   const [newRole, setNewRole] = useState<UserRole>('viewer');
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [noteSaving, setNoteSaving] = useState('');
 
   const load = useCallback(async (): Promise<boolean> => {
     setLoading(true);
@@ -40,6 +42,7 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
     try {
       const payload = await listUsers();
       setUsers(payload.users);
+      setNoteDrafts(Object.fromEntries(payload.users.map((user) => [user.username, user.note || ''])));
       setCandidates(payload.candidates);
       setMe(payload.me || { username: '', owner: false });
       setCandidate((previous) => previous && payload.candidates.includes(previous) ? previous : (payload.candidates[0] || ''));
@@ -79,7 +82,7 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
     setError('');
     setSuccess('');
     try {
-      await deleteUserRole(username);
+      await removeUser(username);
       setConfirming(null);
       await finishMutation(t('usersAdmin.removed'));
     } catch (err: any) {
@@ -87,6 +90,13 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
     } finally {
       setSaving('');
     }
+  };
+
+  const saveNote = async (username: string) => {
+    setNoteSaving(username);
+    try { await updateUserNote(username, noteDrafts[username] || ''); setSuccess(t('usersAdmin.noteSaved')); }
+    catch (err: any) { setError(errorText(err, t('usersAdmin.noteSaveError'))); }
+    finally { setNoteSaving(''); }
   };
 
   const addAssignment = async () => {
@@ -117,6 +127,7 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
                   <th className="px-2 py-2 font-medium">{t('usersAdmin.username')}</th>
                   <th className="px-2 py-2 font-medium">{t('usersAdmin.role')}</th>
                   <th className="px-2 py-2 font-medium">{t('usersAdmin.source')}</th>
+                  <th className="px-2 py-2 font-medium">{t('usersAdmin.badges')}</th>
                   <th className="px-2 py-2 font-medium">{t('usersAdmin.notes')}</th>
                   <th className="px-2 py-2 font-medium">{t('usersAdmin.actions')}</th>
                 </tr></thead>
@@ -124,14 +135,13 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
                   {users.map((item) => {
                     const isSelf = item.username === me.username || item.username === currentUser;
                     const locked = item.owner || isSelf;
-                    const removeLabel = item.env_role ? t('usersAdmin.restore') : t('usersAdmin.remove');
-                    const removeConfirmation = item.env_role ? t('usersAdmin.restoreConfirm') : t('usersAdmin.removeConfirm');
                     return <tr key={item.username} className="border-b border-cyan-500/10 last:border-0">
                       <td className="px-2 py-3 font-mono text-slate-200">{item.username}</td>
                       <td className="px-2 py-3"><div role="group" aria-label={`${t('usersAdmin.role')} ${item.username}`}><ChoiceChips size="sm" options={roles} value={item.role} disabled={locked || saving === item.username} onChange={(value) => void changeRole(item.username, value as UserRole)} /></div></td>
                       <td className="px-2 py-3 text-slate-400">{t(`usersAdmin.sources.${item.source}`)}</td>
-                      <td className="px-2 py-3 text-slate-400"><div className="flex flex-wrap items-center gap-x-3 gap-y-1">{item.owner && <span className="text-cyan-200">{t('usersAdmin.owner')}</span>}{item.owner && <span className="text-slate-500">{t('usersAdmin.ownerConfigOnly')}</span>}{isSelf && <span className="text-cyan-200">{t('usersAdmin.self')}</span>}{item.source === 'env' && item.env_role && <span className="text-slate-500">{t('usersAdmin.fromConfiguration')}: {t(`usersAdmin.roles.${item.env_role}`)}</span>}{item.source === 'db' && item.env_role && <span className="text-slate-500">{t('usersAdmin.changedInPanel')} ({t('usersAdmin.fromConfiguration')}: {t(`usersAdmin.roles.${item.env_role}`)})</span>}</div></td>
-                      <td className="px-2 py-3">{item.source === 'db' && !locked && (confirming === item.username ? <span className="flex flex-wrap items-center gap-2"><span className="text-slate-400">{removeConfirmation}</span><button type="button" className={primaryButtonClass} disabled={saving === item.username} onClick={() => void removeRole(item.username)}>{t('usersAdmin.confirm')}</button><button type="button" className={buttonClass} onClick={() => setConfirming(null)}>{t('usersAdmin.cancel')}</button></span> : <button type="button" className={buttonClass} disabled={saving === item.username} onClick={() => setConfirming(item.username)}>{removeLabel}</button>)}</td>
+                      <td className="px-2 py-3 text-slate-400"><div className="flex flex-wrap items-center gap-1">{item.owner && <span className="user-badge">{t('usersAdmin.owner')}</span>}{isSelf && <span className="user-badge">{t('usersAdmin.self')}</span>}{item.source === 'env' && item.env_role && <span className="user-badge" title={t('usersAdmin.fromConfiguration')}>{t('usersAdmin.fromConfiguration')}: {t(`usersAdmin.roles.${item.env_role}`)}</span>}</div></td>
+                      <td className="px-2 py-3"><input className="user-note-input" value={noteDrafts[item.username] || ''} maxLength={200} aria-label={`${t('usersAdmin.notes')} ${item.username}`} onChange={(event) => setNoteDrafts((current) => ({ ...current, [item.username]: event.target.value }))} onBlur={() => void saveNote(item.username)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void saveNote(item.username); } }} />{noteSaving === item.username && <span className="ml-2 text-xs text-slate-500">{t('usersAdmin.noteSaving')}</span>}</td>
+                      <td className="px-2 py-3">{!locked && (confirming === item.username ? <span className="flex flex-wrap items-center gap-2"><span className="text-slate-400">{t('usersAdmin.removeConfirm')}</span><button type="button" className={primaryButtonClass} disabled={saving === item.username} onClick={() => void removeRole(item.username)}>{t('usersAdmin.confirm')}</button><button type="button" className={buttonClass} onClick={() => setConfirming(null)}>{t('usersAdmin.cancel')}</button></span> : <button type="button" className={buttonClass} disabled={saving === item.username} onClick={() => setConfirming(item.username)}>{t('usersAdmin.remove')}</button>)}</td>
                     </tr>;
                   })}
                 </tbody>
@@ -156,3 +166,5 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
 };
 
 export default UsersAdmin;
+
+
