@@ -18,6 +18,7 @@ describe('Sidebar user management control', () => {
     expect(screen.queryByRole('button', { name: 'usersAdmin.open' })).toBeNull();
     rerender(<ThemeProvider><Sidebar {...props} canManageUsers onOpenUsers={onOpenUsers} /></ThemeProvider>);
     expect(screen.getByRole('button', { name: 'usersAdmin.open' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'usersAdmin.open' }).className).toContain('sidebar__user-settings');
     fireEvent.click(screen.getByRole('button', { name: 'usersAdmin.open' }));
     expect(onOpenUsers).toHaveBeenCalledTimes(1);
   });

@@ -503,7 +503,7 @@ export function ServerStatus({
             </div>
             <div className="grid w-full grid-cols-[auto_auto] items-center justify-end gap-2 min-h-7 xl:flex">
               <button
-                className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white disabled:opacity-50"
+                className="server-status__refresh-btn flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white disabled:opacity-50"
                 onClick={refreshDeck}
                 disabled={refreshBusy}
                 type="button"
@@ -511,7 +511,7 @@ export function ServerStatus({
                 aria-label={t('common.refresh')}
                 aria-busy={refreshBusy}
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${refreshBusy ? 'animate-spin motion-reduce:animate-none' : ''}`} />
+                <RefreshCw className={`server-status__refresh-icon w-3.5 h-3.5 ${refreshBusy ? 'animate-spin motion-reduce:animate-none' : ''}`} />
               </button>
               {onToggleFleet && (
                 <button
