@@ -1900,6 +1900,7 @@
   "addTitle": "Add assignment",
   "addHint": "Choose an existing Linux user and assign a panel role.",
   "candidate": "Linux user",
+  "noCandidates": "No system users without a role.",
   "add": "Add",
   "linuxHint": "Create Linux users on the server with useradd before assigning a role.",
   "roles": {

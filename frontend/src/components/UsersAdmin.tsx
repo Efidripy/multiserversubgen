@@ -125,7 +125,7 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
                       <td className="px-2 py-3 font-mono text-slate-200">{item.username}</td>
                       <td className="px-2 py-3"><div role="group" aria-label={`${t('usersAdmin.role')} ${item.username}`}><ChoiceChips size="sm" options={roles} value={item.role} disabled={locked || saving === item.username} onChange={(value) => void changeRole(item.username, value as UserRole)} /></div></td>
                       <td className="px-2 py-3 text-slate-400">{t(`usersAdmin.sources.${item.source}`)}</td>
-                      <td className="px-2 py-3 text-slate-400">{item.owner && <span className="mr-2">{t('usersAdmin.owner')}</span>}{item.locked && <span>{t('usersAdmin.locked')}</span>}{item.username === currentUser && <span>{t('usersAdmin.self')}</span>}{item.locked && <span className="ml-2 text-slate-500">{t('usersAdmin.serverConfigured')}</span>}</td>
+                      <td className="px-2 py-3 text-slate-400"><div className="flex flex-wrap items-center gap-x-3 gap-y-1">{item.owner && <span className="text-cyan-200">{t('usersAdmin.owner')}</span>}{item.username === currentUser && <span className="text-cyan-200">{t('usersAdmin.self')}</span>}{item.locked && <span className="text-slate-500">{t('usersAdmin.serverConfigured')}</span>}</div></td>
                       <td className="px-2 py-3">{item.source === 'db' && !locked && (confirming === item.username ? <span className="flex flex-wrap items-center gap-2"><span className="text-slate-400">{t('usersAdmin.removeConfirm')}</span><button type="button" className={primaryButtonClass} disabled={saving === item.username} onClick={() => void removeRole(item.username)}>{t('usersAdmin.confirm')}</button><button type="button" className={buttonClass} onClick={() => setConfirming(null)}>{t('usersAdmin.cancel')}</button></span> : <button type="button" className={buttonClass} disabled={saving === item.username} onClick={() => setConfirming(item.username)}>{t('usersAdmin.remove')}</button>)}</td>
                     </tr>;
                   })}
@@ -138,8 +138,8 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
         <section className={panelClass}>
           <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('usersAdmin.addTitle')}</h3>
           <p className="mt-1 text-xs leading-5 text-slate-500">{t('usersAdmin.addHint')}</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,180px)_auto] sm:items-end">
-            <label className="text-xs text-slate-400">{t('usersAdmin.candidate')}<span className="mt-1 block"><SelectMenu value={candidate} options={candidates.map((value) => ({ value, label: value }))} ariaLabel={t('usersAdmin.candidate')} onChange={(value) => setCandidate(String(value))} /></span></label>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
+            <label className="text-xs text-slate-400">{t('usersAdmin.candidate')}<span className="mt-1 block">{candidates.length === 0 ? <span className="flex h-8 items-center text-slate-500">{t('usersAdmin.noCandidates')}</span> : <SelectMenu value={candidate} options={candidates.map((value) => ({ value, label: value }))} ariaLabel={t('usersAdmin.candidate')} onChange={(value) => setCandidate(String(value))} />}</span></label>
             <label className="text-xs text-slate-400">{t('usersAdmin.role')}<span className="mt-1 block"><span role="group" aria-label={t('usersAdmin.role')}><ChoiceChips size="sm" options={roles} value={newRole} onChange={(value) => setNewRole(value as UserRole)} /></span></span></label>
             <button type="button" className={primaryButtonClass} disabled={!candidate || Boolean(saving)} onClick={() => void addAssignment()}>{t('usersAdmin.add')}</button>
           </div>
