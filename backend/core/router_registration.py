@@ -145,9 +145,9 @@ def register_app_routers(
             check_auth=check_auth,
             get_user_role=get_user_role,
             panel_roles=panel_roles,
-            role_admins=lambda: role_admins or set(),
-            role_operators=lambda: role_operators or set(),
-            role_owners=lambda: role_owners or set(),
+            role_admins=role_admins,
+            role_operators=role_operators,
+            role_owners=role_owners,
             enqueue_audit_event=enqueue_audit_event or (lambda _event: None),
         )
     )
