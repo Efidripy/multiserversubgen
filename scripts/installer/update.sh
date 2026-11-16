@@ -17,6 +17,7 @@ source "${INSTALLER_DIR}/lib/config_activation.sh"
 source "${INSTALLER_DIR}/lib/pam_helper.sh"
 source "${INSTALLER_DIR}/lib/component_ownership.sh"
 source "${INSTALLER_DIR}/lib/loki_config.sh"
+source "${INSTALLER_DIR}/lib/owner_account.sh"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
 apt_update() {
@@ -313,7 +314,7 @@ write_install_log() {
         SUB_RATE_LIMIT_COUNT SUB_RATE_LIMIT_WINDOW_SEC TRAFFIC_STATS_CACHE_TTL TRAFFIC_STATS_STALE_TTL
         CLIENTS_CACHE_TTL CLIENTS_CACHE_STALE_TTL TRAFFIC_MAX_WORKERS
         COLLECTOR_BASE_INTERVAL_SEC COLLECTOR_MAX_INTERVAL_SEC COLLECTOR_MAX_PARALLEL
-        REDIS_URL AUDIT_QUEUE_BATCH_SIZE ROLE_OPERATORS
+        REDIS_URL AUDIT_QUEUE_BATCH_SIZE ROLE_OPERATORS ROLE_OWNERS
         MONITORING_ENABLED GRAFANA_WEB_PATH GRAFANA_HTTP_PORT
         ADGUARD_METRICS_ENABLED ADGUARD_METRICS_TARGETS ADGUARD_METRICS_PATH
         ADGUARD_LOKI_ENABLED ADGUARD_QUERYLOG_PATH ADGUARD_SYSTEMD_UNIT
@@ -1133,6 +1134,10 @@ if ! runtime_require_expected_project_dir; then
     echo "❌ Некорректный каталог проекта в install log. Обновление прервано."
     exit 1
 fi
+existing_role_owners="$(owner_account_read_existing_role_owners "$PROJECT_NAME" 2>/dev/null || true)"
+if [ -n "$existing_role_owners" ]; then
+    ROLE_OWNERS="$existing_role_owners"
+fi
 if ! runtime_secrets_load; then
     echo "❌ Runtime secrets file failed security validation. Update aborted."
     exit 1
@@ -1162,6 +1167,7 @@ COLLECTOR_MAX_PARALLEL=${COLLECTOR_MAX_PARALLEL:-"4"}
 REDIS_URL=${REDIS_URL:-""}
 AUDIT_QUEUE_BATCH_SIZE=${AUDIT_QUEUE_BATCH_SIZE:-"200"}
 ROLE_OPERATORS=${ROLE_OPERATORS:-""}
+ROLE_OWNERS=${ROLE_OWNERS:-"admin"}
 MONITORING_ENABLED=${MONITORING_ENABLED:-"true"}
 GRAFANA_WEB_PATH=${GRAFANA_WEB_PATH:-"grafana"}
 GRAFANA_HTTP_PORT=${GRAFANA_HTTP_PORT:-"43000"}
@@ -1218,6 +1224,7 @@ echo "COLLECTOR_MAX_PARALLEL: $COLLECTOR_MAX_PARALLEL"
 echo "REDIS_URL: <redacted>"
 echo "AUDIT_QUEUE_BATCH_SIZE: $AUDIT_QUEUE_BATCH_SIZE"
 echo "ROLE_OPERATORS: ${ROLE_OPERATORS:-<none>}"
+echo "ROLE_OWNERS: ${ROLE_OWNERS:-<none>}"
 echo "MONITORING_ENABLED: $MONITORING_ENABLED"
 echo "ADGUARD_METRICS_ENABLED: $ADGUARD_METRICS_ENABLED"
 echo "ADGUARD_METRICS_TARGETS: ${ADGUARD_METRICS_TARGETS:-<none>}"

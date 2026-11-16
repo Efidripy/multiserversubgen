@@ -19,6 +19,7 @@ source "${INSTALLER_DIR}/lib/pam_helper.sh"
 source "${INSTALLER_DIR}/lib/artifact_manifest.sh"
 source "${INSTALLER_DIR}/lib/component_ownership.sh"
 source "${INSTALLER_DIR}/lib/loki_config.sh"
+source "${INSTALLER_DIR}/lib/owner_account.sh"
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
@@ -692,7 +693,7 @@ write_install_log() {
         SUB_RATE_LIMIT_COUNT SUB_RATE_LIMIT_WINDOW_SEC TRAFFIC_STATS_CACHE_TTL TRAFFIC_STATS_STALE_TTL
         CLIENTS_CACHE_TTL CLIENTS_CACHE_STALE_TTL TRAFFIC_MAX_WORKERS
         COLLECTOR_BASE_INTERVAL_SEC COLLECTOR_MAX_INTERVAL_SEC COLLECTOR_MAX_PARALLEL
-        AUDIT_QUEUE_BATCH_SIZE ROLE_OPERATORS
+        AUDIT_QUEUE_BATCH_SIZE ROLE_OPERATORS ROLE_OWNERS
         MONITORING_ENABLED GRAFANA_WEB_PATH GRAFANA_HTTP_PORT
         ADGUARD_METRICS_ENABLED ADGUARD_METRICS_TARGETS ADGUARD_METRICS_PATH
         ADGUARD_LOKI_ENABLED ADGUARD_QUERYLOG_PATH ADGUARD_SYSTEMD_UNIT
@@ -2224,6 +2225,7 @@ update_project() {
     REDIS_URL=${REDIS_URL:-""}
     AUDIT_QUEUE_BATCH_SIZE=${AUDIT_QUEUE_BATCH_SIZE:-"200"}
     ROLE_OPERATORS=${ROLE_OPERATORS:-""}
+    ROLE_OWNERS=${ROLE_OWNERS:-"admin"}
     MONITORING_ENABLED=${MONITORING_ENABLED:-"true"}
     GRAFANA_WEB_PATH=${GRAFANA_WEB_PATH:-"grafana"}
     GRAFANA_HTTP_PORT=${GRAFANA_HTTP_PORT:-"43000"}
@@ -2404,10 +2406,12 @@ echo -e "${C_YELLOW}======================================================${C_RE
 
 read -p "Имя проекта/сервиса (sub-manager): " PROJECT_NAME
 PROJECT_NAME=${PROJECT_NAME:-sub-manager}
+ROLE_OWNERS=""
 if ! runtime_require_safe_project_name; then
     echo "❌ Некорректное имя проекта/сервиса. Разрешены буквы, цифры, _, . и -; первый символ должен быть буквенно-цифровым."
     exit 1
 fi
+owner_account_collect || exit 1
 read -p "Локальный порт Python (666): " APP_PORT
 APP_PORT=${APP_PORT:-666}
 read -p "SSH порт для fail2ban/UFW (22): " SSH_PORT
@@ -2675,6 +2679,9 @@ echo "✓ Frontend собран: $PROJECT_DIR/build"
 echo "Настройка systemd..."
 runtime_secrets_write
 runtime_ensure_service_user
+owner_account_create || { echo "Owner account creation failed."; exit 1; }
+# Show the generated password right away: a later install failure must not lose it.
+owner_account_print_credentials
 ensure_nginx_http_mime_types
 if ! activate_manager_config true; then
     echo "❌ Конфигурация manager не активирована; предыдущий unit/Nginx конфиг восстановлен."
@@ -2712,8 +2719,9 @@ print_installation_report \
     "${ADGUARD_ADMIN_PASS:-}" \
     "${ADGUARD_INSTALL_ENABLED:-false}" \
     "${SELECTED_CFG:-}"
-
 if ! run_post_install_checks; then
     echo "❌ Пост-проверка установки не пройдена."
     exit 1
 fi
+owner_account_print_credentials
+unset OWNER_PASSWORD OWNER_ACCOUNT_PASSWORD

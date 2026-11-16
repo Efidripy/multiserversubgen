@@ -55,6 +55,14 @@ config_activation_require_route_token() {
     fi
 }
 
+config_activation_require_role_owners() {
+    local value="${1:-}"
+    if [[ ! "$value" =~ ^[a-z_][a-z0-9_-]*(,[a-z_][a-z0-9_-]*)*$ ]]; then
+        config_activation_fail "ROLE_OWNERS must be a comma-separated list of Linux usernames"
+        return 1
+    fi
+}
+
 config_activation_require_public_domain() {
     local value="${1:-}"
     if [[ ! "$value" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] || [[ "$value" == *..* ]]; then
@@ -82,6 +90,7 @@ PYTHON
 }
 
 config_activation_validate_inputs() {
+    ROLE_OWNERS=${ROLE_OWNERS:-"admin"}
     runtime_require_safe_project_name || return 1
     runtime_require_expected_project_dir || return 1
     config_activation_require_port "APP_PORT" "${APP_PORT:-}" || return 1
@@ -106,6 +115,7 @@ config_activation_validate_inputs() {
     for value_name in ALLOW_ORIGINS CA_BUNDLE_PATH ROLE_OPERATORS; do
         config_activation_require_safe_value "$value_name" "${!value_name:-}" || return 1
     done
+    config_activation_require_role_owners "${ROLE_OWNERS:-}" || return 1
     config_activation_require_allowlist "${SECURITY_IP_ALLOWLIST:-}" || return 1
 
     if [ "${SECURITY_MTLS_ENABLED:-false}" = "true" ]; then
@@ -254,7 +264,7 @@ config_activation_render_service() {
         "CLIENTS_CACHE_TTL=$CLIENTS_CACHE_TTL" "CLIENTS_CACHE_STALE_TTL=$CLIENTS_CACHE_STALE_TTL" \
         "TRAFFIC_MAX_WORKERS=$TRAFFIC_MAX_WORKERS" "COLLECTOR_BASE_INTERVAL_SEC=$COLLECTOR_BASE_INTERVAL_SEC" \
         "COLLECTOR_MAX_INTERVAL_SEC=$COLLECTOR_MAX_INTERVAL_SEC" "COLLECTOR_MAX_PARALLEL=$COLLECTOR_MAX_PARALLEL" \
-        "AUDIT_QUEUE_BATCH_SIZE=$AUDIT_QUEUE_BATCH_SIZE" "ROLE_OPERATORS=$ROLE_OPERATORS" \
+        "AUDIT_QUEUE_BATCH_SIZE=$AUDIT_QUEUE_BATCH_SIZE" "ROLE_OPERATORS=$ROLE_OPERATORS" "ROLE_OWNERS=${ROLE_OWNERS:-admin}" \
         "MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED" <<'PYTHON'
 from pathlib import Path
 import re
