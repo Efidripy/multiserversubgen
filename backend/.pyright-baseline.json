@@ -1098,6 +1098,108 @@
     "count": 1
   },
   {
+    "file": "backend/services/telegram_registry_customerops.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\"",
+    "count": 7
+  },
+  {
+    "file": "backend/services/telegram_registry_customerops.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 7
+  },
+  {
+    "file": "backend/services/telegram_registry_customerops.py",
+    "rule": "reportGeneralTypeIssues",
+    "message": "\"tuple[type[ValueError], type[TypeError], type[JSONDecodeError], Unknown | None]\" is not a valid exception class",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry_customerops.py",
+    "rule": "reportOptionalCall",
+    "message": "Object of type \"None\" cannot be called",
+    "count": 205
+  },
+  {
+    "file": "backend/services/telegram_registry_devices.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\"",
+    "count": 3
+  },
+  {
+    "file": "backend/services/telegram_registry_devices.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 3
+  },
+  {
+    "file": "backend/services/telegram_registry_devices.py",
+    "rule": "reportInvalidTypeForm",
+    "message": "Variable not allowed in type expression",
+    "count": 2
+  },
+  {
+    "file": "backend/services/telegram_registry_identity.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\"",
+    "count": 2
+  },
+  {
+    "file": "backend/services/telegram_registry_identity.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 2
+  },
+  {
+    "file": "backend/services/telegram_registry_identity.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"object\" is not assignable to type \"ConvertibleToInt\" \"object\" is not assignable to \"str\" \"object\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"object\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"object\" is incompatible with protocol \"SupportsIndex\" \"__index__\" is not present",
+    "count": 4
+  },
+  {
+    "file": "backend/services/telegram_registry_identity.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"object\" is not assignable to type \"ConvertibleToInt\" \"object\" is not assignable to \"str\" \"object\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"object\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"object\" is incompatible with protocol \"SupportsIndex\" \"__index__\" is not present ...",
+    "count": 4
+  },
+  {
+    "file": "backend/services/telegram_registry_nodeops.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\"",
+    "count": 3
+  },
+  {
+    "file": "backend/services/telegram_registry_nodeops.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 3
+  },
+  {
+    "file": "backend/services/telegram_registry_provisioning.py",
+    "rule": "reportInvalidTypeForm",
+    "message": "Variable not allowed in type expression",
+    "count": 1
+  },
+  {
+    "file": "backend/services/telegram_registry_registration.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\"",
+    "count": 5
+  },
+  {
+    "file": "backend/services/telegram_registry_registration.py",
+    "rule": "reportArgumentType",
+    "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\" ...",
+    "count": 5
+  },
+  {
+    "file": "backend/services/telegram_registry_registration.py",
+    "rule": "reportOptionalMemberAccess",
+    "message": "\"isoformat\" is not a known attribute of \"None\"",
+    "count": 2
+  },
+  {
     "file": "backend/services/telegram_registry_support.py",
     "rule": "reportArgumentType",
     "message": "Argument of type \"int | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\" Type \"int | None\" is not assignable to type \"ConvertibleToInt\" Type \"None\" is not assignable to type \"ConvertibleToInt\" \"None\" is not assignable to \"str\" \"None\" is incompatible with protocol \"Buffer\" \"__buffer__\" is not present \"None\" is incompatible with protocol \"SupportsInt\" \"__int__\" is not present \"None\" is incompatible with protocol \"SupportsIndex\"",
