@@ -115,6 +115,28 @@ EXPECTED_TRANSFERRED_SIGNATURES.update({
 })
 
 
+EXPECTED_TRANSFERRED_SIGNATURES.update({
+    'create_pending_application': "(self, telegram_user_id: 'int') -> 'PendingApplicationResult'",
+    'request_required_introduction': "(self, telegram_user_id: 'int') -> 'bool'",
+    'submit_required_introduction': "(self, telegram_user_id: 'int', text: 'str', *, maximum_chars: 'int') -> 'PendingApplicationResult'",
+    'submit_introduction': "(self, telegram_user_id: 'int', text: 'str', *, maximum_chars: 'int') -> 'bool'",
+    'list_pending_applications': "(self) -> 'list[PendingApplication]'",
+    'list_blocked_identities': "(self, *, limit: 'int' = 100) -> 'list[BlockedIdentity]'",
+    'get_pending_application': "(self, telegram_user_id: 'int') -> 'PendingApplication'",
+    'approve_new_application': "(self, *, telegram_user_id: 'int', expected_identity_version: 'int', email_display: 'str | None', idempotency_key: 'str', approved_by: 'str') -> 'ApprovalResult'",
+    'approve_existing_application': "(self, *, telegram_user_id: 'int', customer_id: 'int', expected_identity_version: 'int', idempotency_key: 'str', approved_by: 'str') -> 'ExistingApprovalResult'",
+    'adopt_discovered_existing_application': "(self, *, telegram_user_id: 'int', email_display: 'str', bindings: 'Iterable[DiscoveredExistingBinding]', expected_identity_version: 'int', idempotency_key: 'str', approved_by: 'str') -> 'ExistingApprovalResult'",
+    'queue_deferred_existing_discovery': "(self, *, telegram_user_id: 'int', email_display: 'str', expected_identity_version: 'int', idempotency_key: 'str', approved_by: 'str') -> 'DeferredExistingApprovalResult'",
+    'get_existing_discovery_job': "(self, job_id: 'int') -> 'ExistingDiscoveryJobStatus'",
+    'recover_existing_discovery_target': "(self, *, job_id: 'int', node_id: 'int', expected_job_version: 'int', idempotency_key: 'str', requested_by: 'str') -> 'ExistingDiscoveryJobStatus'",
+    'reject_application': "(self, *, telegram_user_id: 'int', expected_identity_version: 'int', idempotency_key: 'str', rejected_by: 'str', reason: 'str | None' = None) -> 'TelegramIdentity'",
+    'block_identity': "(self, *, telegram_user_id: 'int', expected_identity_version: 'int', idempotency_key: 'str', blocked_by: 'str', reason: 'str | None' = None) -> 'TelegramIdentity'",
+    'unblock_identity': "(self, *, telegram_user_id: 'int', expected_identity_version: 'int', idempotency_key: 'str', unblocked_by: 'str') -> 'TelegramIdentity'",
+    'record_unapproved_noop': "(self, telegram_user_id: 'int', *, now: 'datetime | None' = None, window_seconds: 'int' = 600, soft_limit: 'int' = 10, auto_block_at: 'int' = 51) -> 'AbuseNoopResult'",
+    '_change_unbound_application_state': "(self, *, telegram_user_id: 'int', expected_identity_version: 'int', idempotency_key: 'str', actor: 'str', action: 'str', reason: 'str | None') -> 'TelegramIdentity'",
+})
+
+
 def test_telegram_registry_public_methods_are_stable():
     actual = [name for name in vars(TelegramRegistry) if not name.startswith("__")]
     assert actual == EXPECTED_TELEGRAM_REGISTRY_NAMES
