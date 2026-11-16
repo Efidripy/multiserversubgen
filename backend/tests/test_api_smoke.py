@@ -1328,3 +1328,15 @@ def test_live_login_path_goes_through_auth_service(monkeypatch):
     monkeypatch.setattr(main.auth_service, "authenticate", lambda u, pw: calls.append((u, pw)) or True)
     assert main.p.authenticate("admin", "x") is True
     assert calls == [("admin", "x")]
+
+
+def test_users_endpoint_works_through_real_app_wiring(monkeypatch):
+    monkeypatch.setattr(main, "ROLE_ADMINS", {"admin"})
+    monkeypatch.setattr(main.p, "authenticate", lambda u, p: u == "admin" and p == "secret")
+    client = TestClient(main.app)
+
+    response = client.get("/api/v1/users", headers=_basic_auth())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {"users", "candidates", "me"} <= set(payload)
