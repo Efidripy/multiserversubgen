@@ -20,6 +20,7 @@
     "inbounds": "Inbound Manager",
     "subscriptions": "Subscriptions",
     "telegram": "Telegram",
+    "users": "Users",
     "backup": "Backup Manager",
     "serverStatus": "Server Status",
     "groupData": "Data",
@@ -1746,6 +1747,7 @@
     "openMenu": "Open menu"
   },
   "tabEyebrow": {
+    "users": "Access control",
     "dashboard": "Mission Control",
     "inbounds": "Inbounds",
     "clients": "Clients",
@@ -1756,6 +1758,7 @@
     "telegram": "Access management"
   },
   "tabDescription": {
+    "users": "Manage panel roles and assignments",
     "dashboard": "Local command overview for nodes, xray state and key operational checks.",
     "inbounds": "",
     "clients": "",
@@ -1868,5 +1871,45 @@
     "comparedPeriod": "Compared with previous {{period}}",
     "historyHint": "History available: {{days}} days; comparison requires {{required}} days.",
     "retry": "Retry"
+  },
+  "usersAdmin": {
+  "open": "Manage users",
+  "title": "Users",
+  "hint": "Assign panel roles to Linux users. Environment assignments are locked.",
+  "listTitle": "Current assignments",
+  "loading": "Loading users...",
+  "empty": "No users are assigned.",
+  "loadError": "Could not load users",
+  "saveError": "Could not save role",
+  "removeError": "Could not remove assignment",
+  "saved": "Role saved",
+  "removed": "Assignment removed",
+  "username": "Username",
+  "role": "Role",
+  "source": "Source",
+  "notes": "Notes",
+  "actions": "Actions",
+  "owner": "owner",
+  "locked": "locked",
+  "self": "your account",
+  "serverConfigured": "set in server configuration",
+  "remove": "Remove assignment",
+  "removeConfirm": "Remove this assignment?",
+  "confirm": "Confirm",
+  "cancel": "Cancel",
+  "addTitle": "Add assignment",
+  "addHint": "Choose an existing Linux user and assign a panel role.",
+  "candidate": "Linux user",
+  "add": "Add",
+  "linuxHint": "Create Linux users on the server with useradd before assigning a role.",
+  "roles": {
+    "viewer": "Viewer",
+    "operator": "Operator",
+    "admin": "Admin"
+  },
+  "sources": {
+    "env": "Configuration",
+    "db": "Panel database"
   }
+}
 }

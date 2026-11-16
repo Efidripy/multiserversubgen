@@ -461,6 +461,38 @@
     justify-content: center;
   }
 
+  .sidebar__user-settings {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin-left: auto;
+    border: 1px solid rgba(34, 211, 238, 0.2);
+    border-radius: 5px;
+    color: #94a3b8;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .sidebar__user-settings:hover,
+  .sidebar__user-settings.is-active {
+    color: #67e8f9;
+    border-color: rgba(103, 232, 249, 0.55);
+    background: rgba(34, 211, 238, 0.1);
+  }
+
+  .sidebar__user-settings--collapsed {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    border: 0;
+    border-radius: 4px;
+  }
+
   .sidebar__language {
     display: flex;
     flex-direction: column;
@@ -578,6 +610,7 @@
   }
 
   .sidebar__collapsed-card {
+    position: relative;
     width: 48px;
     height: 48px;
     display: inline-flex;

@@ -23,6 +23,7 @@ import type { BackupHeaderProjection } from './components/BackupManager';
 import type { MonitoringHeaderProjection } from './components/MonitoringDashboard';
 import type { SubscriptionHeaderProjection } from './components/SubscriptionManager';
 import { usePullToRefresh } from './hooks/usePullToRefresh';
+import { UsersAdmin } from './components/UsersAdmin';
 
 const LazySubscriptionManager = React.lazy(() => import('./components/SubscriptionManager').then((module) => ({ default: module.SubscriptionManager })));
 const LazyInboundManager = React.lazy(() => import('./components/InboundManager').then((module) => ({ default: module.InboundManager })));
@@ -32,7 +33,7 @@ const LazyMonitoringDashboard = React.lazy(() => import('./components/Monitoring
 const LazyBackupManager = React.lazy(() => import('./components/BackupManager').then((module) => ({ default: module.BackupManager })));
 const LazyTelegramAdmin = React.lazy(() => import('./components/TelegramAdmin').then((module) => ({ default: module.TelegramAdmin })));
 
-type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions' | 'telegram';
+type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions' | 'telegram' | 'users';
 type NoticeLevel = 'info' | 'success' | 'warning' | 'danger';
 type HeaderStatTone = 'default' | 'accent' | 'success' | 'warning' | 'danger';
 
@@ -139,6 +140,12 @@ const TAB_META: Record<TabType, { icon: IconName; labelKey: string; eyebrowKey: 
     labelKey: 'nav.telegram',
     eyebrowKey: 'tabEyebrow.telegram',
     descriptionKey: 'tabDescription.telegram',
+  },
+  users: {
+    icon: 'user',
+    labelKey: 'nav.users',
+    eyebrowKey: 'tabEyebrow.users',
+    descriptionKey: 'tabDescription.users',
   },
 };
 
@@ -373,7 +380,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (!authBootstrapDone) return;
-    if (role !== 'admin' && (activeTab === 'backup' || activeTab === 'subscriptions' || activeTab === 'telegram')) {
+    if (role !== 'admin' && (activeTab === 'backup' || activeTab === 'subscriptions' || activeTab === 'telegram' || activeTab === 'users')) {
       setActiveTab('dashboard');
     }
     // Viewers cannot read client or inbound lists (credential-bearing reads need operator).
@@ -909,6 +916,8 @@ export const App: React.FC = () => {
         />;
       case 'telegram':
         return <LazyTelegramAdmin />;
+      case 'users':
+        return <UsersAdmin currentUser={user} />;
       default:
         return null;
     }
@@ -932,6 +941,8 @@ export const App: React.FC = () => {
         onOpenLog={() => setLogPanelOpen(v => !v)}
         mobileOpen={mobileSidebarOpen}
         onMobileClose={() => setMobileSidebarOpen(false)}
+        canManageUsers={role === 'admin'}
+        onOpenUsers={() => setActiveTab('users')}
       />
 
       <div ref={pullToRefresh.rootRef} className="app-main min-w-0 flex-1 overflow-hidden" {...pullToRefresh.handlers}>
