@@ -16,7 +16,7 @@ import secrets
 import socket
 import time
 from threading import Lock
-from typing import Dict, Optional, Set, Tuple
+from typing import Callable, Dict, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ AUTH_CACHE_TTL_SEC = 30
 AUTH_CACHE_NEGATIVE_TTL_SEC = 5
 WEB_SESSION_TTL_SEC = 8 * 60 * 60
 WEB_SESSION_COOKIE_NAME = "sub_manager_session"
+ROLE_LOOKUP_CACHE_TTL_SEC = 5
 
 
 def parse_mfa_users(raw: str) -> Dict[str, str]:
@@ -70,6 +71,7 @@ class AuthService:
         ws_auth_secret: str = "",
         mfa_totp_enabled: bool = False,
         mfa_totp_users: Optional[Dict[str, str]] = None,
+        role_lookup: Optional[Callable[[str], Optional[str]]] = None,
     ) -> None:
         self.role_operators: Set[str] = role_operators or set()
         self.role_admins: Set[str] = role_admins or set()
@@ -78,6 +80,10 @@ class AuthService:
         self._ws_ticket_lock = Lock()
         self.mfa_totp_enabled = mfa_totp_enabled
         self.mfa_totp_users: Dict[str, str] = mfa_totp_users or {}
+        self.role_lookup = role_lookup
+        self._role_cache: Dict[str, Tuple[float, str]] = {}
+        self._role_cache_lock = Lock()
+        self._role_cache_generation = 0
 
     # ------------------------------------------------------------------
     # Role resolution
@@ -93,7 +99,32 @@ class AuthService:
             return "admin"
         if username in self.role_operators:
             return "operator"
+        if self.role_lookup is not None:
+            with self._role_cache_lock:
+                cached = self._role_cache.get(username)
+                if cached is not None and cached[0] > time.monotonic():
+                    return cached[1]
+                generation = self._role_cache_generation
+            try:
+                role = self.role_lookup(username)
+            except Exception:
+                logger.exception("Role lookup failed for %s", username)
+                role = None
+            resolved_role = role if role in ROLE_RANK else "viewer"
+            with self._role_cache_lock:
+                # A change that landed mid-lookup bumped the generation: do not publish the stale role.
+                if generation == self._role_cache_generation:
+                    self._role_cache[username] = (
+                        time.monotonic() + ROLE_LOOKUP_CACHE_TTL_SEC,
+                        resolved_role,
+                    )
+            return resolved_role
         return "viewer"
+
+    def invalidate_role_cache(self) -> None:
+        with self._role_cache_lock:
+            self._role_cache_generation += 1
+            self._role_cache.clear()
 
     @staticmethod
     def has_min_role(user_role: str, min_role: str) -> bool:
@@ -252,6 +283,8 @@ class AuthService:
         """
         method = method.upper()
         path = path.lower()
+        if path == "/api/v1/users" or path.startswith("/api/v1/users/"):
+            return "admin"
         if path.startswith("/api/v1/subscription-client-settings"):
             return "admin"
         if path in {"/api/v1/auth/session", "/api/v1/auth/logout"}:

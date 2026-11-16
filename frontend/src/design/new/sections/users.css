@@ -1,0 +1,26 @@
+/* Keep role management aligned with the compact admin sections. */
+:root[data-design="new"] [data-ln="users"] {
+  min-width: 0;
+}
+
+:root[data-design="new"] [data-ln="users"] section {
+  border-color: var(--ln-line);
+  background: var(--ln-surface);
+  box-shadow: none;
+}
+
+:root[data-design="new"] [data-ln="users"] table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ln-surface);
+}
+
+:root[data-design="new"] [data-ln="users"] table :is(th, td) {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+:root[data-design="new"] [data-ln="users"] button {
+  border-radius: var(--ln-r-sm);
+}

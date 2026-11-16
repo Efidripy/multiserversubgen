@@ -18,6 +18,8 @@ class ConnectionManager:
         self.active_connections: Set[WebSocket] = set()
         self.subscriptions: Dict[WebSocket, Set[str]] = {}
         self.connection_roles: Dict[WebSocket, str] = {}
+        self.connection_users: Dict[WebSocket, str] = {}
+        self._loop = None
         self._activity_callback = None
 
     def set_activity_callback(self, callback):
@@ -39,6 +41,8 @@ class ConnectionManager:
         self.active_connections.add(websocket)
         self.subscriptions[websocket] = set()
         self.connection_roles[websocket] = role
+        self.connection_users[websocket] = user
+        self._loop = asyncio.get_running_loop()
         logger.info(f"New WebSocket connection. Total: {len(self.active_connections)}")
         self._notify_activity()
 
@@ -50,6 +54,7 @@ class ConnectionManager:
         self.active_connections.discard(websocket)
         self.subscriptions.pop(websocket, None)
         self.connection_roles.pop(websocket, None)
+        self.connection_users.pop(websocket, None)
         logger.info(f"WebSocket disconnected. Total: {len(self.active_connections)}")
         
     def subscribe(self, websocket: WebSocket, channel: str):
@@ -64,6 +69,23 @@ class ConnectionManager:
         if websocket in self.subscriptions:
             self.subscriptions[websocket].discard(channel)
             logger.debug(f"Client unsubscribed from: {channel}")
+
+    def close_sockets_with_changed_role(self, resolve_role) -> int:
+        """Close sockets whose user's role changed; the client reconnects with the new role.
+
+        Safe to call from a worker thread: closing is scheduled on the loop that accepted them.
+        """
+        loop = self._loop
+        stale = [
+            ws
+            for ws, user in list(self.connection_users.items())
+            if user and resolve_role(user) != self.connection_roles.get(ws)
+        ]
+        if loop is None or not stale:
+            return 0
+        for ws in stale:
+            asyncio.run_coroutine_threadsafe(ws.close(code=1008), loop)
+        return len(stale)
 
     @staticmethod
     def has_channel_access(role: str, minimum_role: str) -> bool:
