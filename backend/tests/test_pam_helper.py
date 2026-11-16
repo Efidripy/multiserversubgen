@@ -112,3 +112,14 @@ def test_diag_request_reports_pam_status_only_for_the_service_uid():
     # A diag flag without a status callback never reaches the plain authenticator.
     assert json.loads(PAM.authenticate_request(payload, peer_uid=1000, expected_uid=1000, pam_authenticate=lambda _u, _p: True)) == {"ok": False}
     assert PAM.SELF_CHECK_OK_STATUSES == {7, 10}
+
+
+def test_root_peer_is_accepted_for_installs_that_run_the_service_as_root():
+    assert response(b'{"user":"alice","password":"secret"}\n', peer=0, expected=993) == {"ok": True}
+    assert response(b'{"user":"alice","password":"secret"}\n', peer=1001, expected=993) == {"ok": False}
+
+
+def test_installer_probes_the_effective_runtime_user():
+    script = (REPO / "scripts/installer/lib/pam_helper.sh").read_text(encoding="utf-8")
+    assert "systemctl show \"$project_name\" -p User --value" in script
+    assert script.count("pam_helper_probe ") >= 3  # definition + project user + runtime user
