@@ -16,3 +16,32 @@ def test_telegram_registry_public_surface_snapshot():
 
 def test_telegram_registry_transferred_signatures_snapshot():
     assert {name: str(inspect.signature(getattr(TelegramRegistry, name))) for name in TRANSFERRED_SIGNATURES} == TRANSFERRED_SIGNATURES
+
+MOVED_SIGNATURES = {
+    "get_transport_preference": "(self) -> 'TelegramTransportPreference'",
+    "set_transport_preference": "(self, *, mode: 'str', expected_row_version: 'int', updated_by: 'str', proxy_host: 'str | None' = None, proxy_port: 'int | None' = None) -> 'TelegramTransportPreference'",
+    "get_or_create_identity": "(self, *, telegram_user_id: 'int', chat_id: 'int', username: 'str | None', first_name: 'str | None', last_name: 'str | None', phone_number: 'str | None' = None, locale: 'str | None' = None) -> 'TelegramIdentity'",
+    "get_locale": "(self, telegram_user_id: 'int') -> 'str'",
+    "set_locale": "(self, telegram_user_id: 'int', locale: 'object') -> 'str'",
+    "get_preapproval": "(self, telegram_user_id: 'int') -> 'TelegramPreapproval | None'",
+    "_preapproval_from_row": "(row: 'tuple[object, ...]') -> 'TelegramPreapproval'",
+    "_preapproval_from_receipt": "(payload: 'object') -> 'TelegramPreapproval'",
+    "create_existing_customer_preapproval": "(self, *, telegram_user_id: 'int', customer_id: 'int', expected_preapproval_version: 'int', idempotency_key: 'str', created_by: 'str') -> 'TelegramPreapproval'",
+    "create_new_customer_preapproval": "(self, *, telegram_user_id: 'int', email_display: 'str', expected_preapproval_version: 'int', idempotency_key: 'str', created_by: 'str') -> 'TelegramPreapproval'",
+    "activate_preapproval": "(self, telegram_user_id: 'int') -> 'ExistingApprovalResult | ApprovalResult | None'",
+    "_activate_new_customer_preapproval": "(self, *, conn: 'sqlite3.Connection', telegram_user_id: 'int', identity: 'tuple[object, ...]', preapproval: 'tuple[object, ...]') -> 'ApprovalResult | None'",
+    "unlink_identity": "(self, *, telegram_user_id: 'int', customer_id: 'int', expected_identity_version: 'int', idempotency_key: 'str', unlinked_by: 'str') -> 'TelegramUnlinkResult'",
+    "safe_subscription_node_ids": "(self, email: 'str') -> 'frozenset[int] | None'",
+    "enabled_node_ids": "(self) -> 'frozenset[int]'",
+    "has_confirmed_enabled_subscription_binding": "(self, email: 'str') -> 'bool'",
+    "get_customer_access": "(self, telegram_user_id: 'int') -> 'TelegramCustomerAccess'",
+    "get_interface_window": "(self, telegram_user_id: 'int') -> 'tuple[int, bool] | None'",
+    "set_interface_window": "(self, *, telegram_user_id: 'int', message_id: 'int', has_text: 'bool') -> 'None'",
+    "_active_telegram_customer": "(conn: 'sqlite3.Connection', telegram_user_id: 'int') -> 'tuple[int, str]'",
+    "create_customer": "(self, *, email_display: 'str', origin: 'str', email_source: 'str', public_code: 'str | None' = None) -> 'int'",
+}
+
+
+def test_telegram_registry_identity_facade_signatures():
+    actual = {name: str(inspect.signature(getattr(TelegramRegistry, name))) for name in MOVED_SIGNATURES}
+    assert actual == MOVED_SIGNATURES
