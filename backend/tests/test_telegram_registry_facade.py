@@ -7,6 +7,19 @@ EXPECTED_TELEGRAM_REGISTRY_NAMES = ['database_path', 'normalize_new_customer_ema
 
 EXPECTED_TRANSFERRED_SIGNATURES = {'claim_update': "(self, *, update_id: 'int', telegram_user_id: 'int | None', update_type: 'str', payload_digest: 'str') -> 'bool'", 'store_update_responses': "(self, *, update_id: 'int', responses: 'list[tuple]') -> 'None'", 'pending_update_responses': "(self, update_id: 'int') -> 'list[tuple[int, int, str, dict[str, Any] | None]]'", 'mark_update_response_delivered': "(self, *, update_id: 'int', response_index: 'int') -> 'None'", 'mark_update_processed': "(self, update_id: 'int') -> 'None'", 'retry_update_response': "(self, *, update_id: 'int', response_index: 'int') -> 'None'", 'get_subscription_message_receipt': "(self, telegram_user_id: 'int') -> 'TelegramSubscriptionMessageReceipt | None'", 'record_subscription_message_delivery': "(self, *, telegram_user_id: 'int', token_digest: 'str', chat_id: 'int', message_id: 'int') -> 'None'", 'get_service_notice': "(self) -> 'TelegramServiceNotice'", 'set_service_notice': "(self, *, body: 'str | None', expected_row_version: 'int', idempotency_key: 'str', updated_by: 'str') -> 'TelegramServiceNotice'"}
 
+EXPECTED_TRANSFERRED_SIGNATURES.update({
+    'eligible_provisioning_node_count': "(self) -> 'int'",
+    'get_notification_preferences': "(self, telegram_user_id: 'int') -> 'TelegramNotificationPreferences'",
+    'toggle_background_notifications': "(self, telegram_user_id: 'int') -> 'TelegramNotificationPreferences'",
+    'toggle_expiry_reminders': "(self, telegram_user_id: 'int') -> 'TelegramNotificationPreferences'",
+    'toggle_traffic_reminders': "(self, telegram_user_id: 'int') -> 'TelegramNotificationPreferences'",
+    'toggle_traffic_reminder_threshold': "(self, telegram_user_id: 'int', threshold_percent: 'int') -> 'TelegramNotificationPreferences'",
+    'list_traffic_reminder_candidates': "(self) -> 'tuple[CustomerTrafficQuotaCandidate, ...]'",
+    'list_customer_traffic_observation_bindings': "(self) -> 'dict[int, tuple[CustomerTrafficObservationBinding, ...]]'",
+    'observe_customer_traffic_bindings': "(self, observations: 'dict[int, dict[tuple[int, int], int]]') -> 'tuple[CustomerTrafficLedger, ...]'",
+    'get_customer_traffic': "(self, customer_id: 'int') -> 'CustomerTrafficLedger'",
+})
+
 
 def test_telegram_registry_public_methods_are_stable():
     actual = [name for name in vars(TelegramRegistry) if not name.startswith("__")]
