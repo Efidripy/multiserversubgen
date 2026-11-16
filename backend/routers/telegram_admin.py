@@ -545,10 +545,10 @@ def build_telegram_admin_router(
         return {"unlink": asdict(result), "remote_io": "not_started"}
 
     @router.get("/api/v1/telegram/jobs")
-    def list_provisioning_jobs(request: Request, limit: int = 100, offset: int = 0):
+    def list_provisioning_jobs(request: Request, limit: int = 100, offset: int = 0, status: str = "all"):
         username = require_admin(request)
         try:
-            items, total = registry.list_provisioning_jobs_page(limit=limit, offset=offset)
+            items, total = registry.list_provisioning_jobs_page(limit=limit, offset=offset, status=status)
             role = "owner" if is_owner is not None and is_owner(username) else get_user_role(username)
             return {
                 "items": [asdict(item) for item in items],
@@ -571,10 +571,10 @@ def build_telegram_admin_router(
         return {**registry.history_overview(), "can_clear": "provisioning_history_clear" in capability_matrix.get(role, frozenset())}
 
     @router.get("/api/v1/telegram/history/operations")
-    def list_telegram_history_operations(request: Request, limit: int = 100, offset: int = 0):
+    def list_telegram_history_operations(request: Request, limit: int = 100, offset: int = 0, status: str = "all"):
         require_admin(request)
         try:
-            items, total = registry.list_customer_operations_page(limit=limit, offset=offset)
+            items, total = registry.list_customer_operations_page(limit=limit, offset=offset, status=status)
             dismissed = registry.dismissed_operation_ids([item.operation_id for item in items])
             return {"items": [{**asdict(item), "dismissed": item.operation_id in dismissed} for item in items], "total": total}
         except TelegramRegistryError as exc:
@@ -584,7 +584,8 @@ def build_telegram_admin_router(
     def list_telegram_history_drift(request: Request, status: str = "all", limit: int = 100, offset: int = 0):
         require_admin(request)
         try:
-            return {"items": [asdict(item) for item in registry.list_drift_findings(status=status, limit=limit, offset=offset)]}
+            items, total = registry.list_drift_page(status=status, limit=limit, offset=offset)
+            return {"items": [asdict(item) for item in items], "total": total}
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
 
@@ -603,18 +604,18 @@ def build_telegram_admin_router(
         return {"items": registry.list_missing_binding_nodes()}
 
     @router.get("/api/v1/telegram/history/clear-count")
-    def get_telegram_history_clear_count(request: Request, section: str, node_id: int | None = None):
+    def get_telegram_history_clear_count(request: Request, section: str, node_id: int | None = None, mode: str = "safe"):
         require_capability(request, "provisioning_history_clear")
         try:
-            return {"deleted_count": registry.history_clear_count(section, node_id)}
+            return {"deleted_count": registry.history_clear_count(section, node_id, mode)}
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
 
     @router.get("/api/v1/telegram/history/audit")
-    def list_telegram_history_audit(request: Request, limit: int = 100, offset: int = 0):
+    def list_telegram_history_audit(request: Request, limit: int = 100, offset: int = 0, outcome: str = "all"):
         require_admin(request)
         try:
-            items, total = registry.list_audit_page(limit=limit, offset=offset)
+            items, total = registry.list_audit_page(limit=limit, offset=offset, outcome=outcome)
             return {"items": items, "total": total}
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
@@ -623,7 +624,8 @@ def build_telegram_admin_router(
     def clear_telegram_operation_history(request: Request, data: Dict):
         username = require_capability(request, "provisioning_history_clear")
         try:
-            return {"deleted_count": registry.clear_customer_operation_history(idempotency_key=data.get("idempotency_key"), cleared_by=username)}
+            result = registry.clear_customer_operation_history(idempotency_key=data.get("idempotency_key"), cleared_by=username, mode=data.get("mode", "safe"))
+            return result if isinstance(result, dict) else {"deleted_count": result, "hidden_count": 0}
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
 
@@ -631,7 +633,16 @@ def build_telegram_admin_router(
     def clear_telegram_drift_history(request: Request, data: Dict):
         username = require_capability(request, "provisioning_history_clear")
         try:
-            return {"deleted_count": registry.clear_drift_history(idempotency_key=data.get("idempotency_key"), cleared_by=username)}
+            result = registry.clear_drift_history(idempotency_key=data.get("idempotency_key"), cleared_by=username, mode=data.get("mode", "safe"))
+            return result if isinstance(result, dict) else {"deleted_count": result, "hidden_count": 0}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/history/audit/clear")
+    def clear_telegram_audit_history(request: Request, data: Dict):
+        username = require_capability(request, "provisioning_history_clear")
+        try:
+            return registry.clear_audit_history(idempotency_key=data.get("idempotency_key"), cleared_by=username)
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
 
@@ -647,12 +658,12 @@ def build_telegram_admin_router(
     def clear_provisioning_job_history(request: Request, data: Dict):
         username = require_capability(request, "provisioning_history_clear")
         try:
-            deleted_count = registry.clear_terminal_provisioning_history(
-                idempotency_key=data.get("idempotency_key"), cleared_by=username,
+            result = registry.clear_terminal_provisioning_history(
+                idempotency_key=data.get("idempotency_key"), cleared_by=username, mode=data.get("mode", "safe"),
             )
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
-        return {"deleted_count": deleted_count, "remote_io": "not_started"}
+        return {**(result if isinstance(result, dict) else {"deleted_count": result, "hidden_count": 0}), "remote_io": "not_started"}
 
     @router.get("/api/v1/telegram/jobs/{job_id}")
     def get_provisioning_job(job_id: int, request: Request):

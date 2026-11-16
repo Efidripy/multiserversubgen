@@ -50,18 +50,38 @@ describe('TelegramHistoryDialogs clear actions', () => {
     expect((clear as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('clears operations through the confirmation dialog and refreshes', async () => {
+  it('offers safe and complete clearing and passes the chosen mode', async () => {
     api.listTelegramHistoryOperations.mockResolvedValue({ items: [], total: 0 });
-    api.getTelegramHistoryClearCount.mockResolvedValue(3);
-    api.clearTelegramOperationHistory.mockResolvedValue(3);
+    api.getTelegramHistoryClearCount.mockImplementation(async (_section: string, _node: unknown, mode: string) => (mode === 'all' ? 9 : 3));
+    api.clearTelegramOperationHistory.mockResolvedValue({ deleted_count: 3, hidden_count: 6 });
     const onChanged = vi.fn(async () => undefined);
     render(<TelegramHistoryDialogs overview={overview(true)} canClear={false} mutating={false} setMutating={vi.fn()} onChanged={onChanged} />);
     fireEvent.click(screen.getByRole('button', { name: new RegExp(ru.telegram.historyOperations) }));
     fireEvent.click(await screen.findByRole('button', { name: ru.telegram.historyClear }));
-    await screen.findByText(ru.telegram.historyClearConfirm.replace('{{count}}', '3'));
-    fireEvent.click(screen.getByRole('button', { name: ru.common.confirm }));
-    await waitFor(() => expect(api.clearTelegramOperationHistory).toHaveBeenCalledTimes(1));
+    await screen.findByText(ru.telegram.historyClearAllLine.replace('{{count}}', '9'));
+    fireEvent.click(screen.getByRole('button', { name: ru.telegram.historyClearAll }));
+    await waitFor(() => expect(api.clearTelegramOperationHistory).toHaveBeenCalledWith('all'));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it('clears only safe records when the safe option is chosen', async () => {
+    api.listTelegramHistoryOperations.mockResolvedValue({ items: [], total: 0 });
+    api.getTelegramHistoryClearCount.mockResolvedValue(3);
+    api.clearTelegramOperationHistory.mockResolvedValue({ deleted_count: 3, hidden_count: 0 });
+    render(<TelegramHistoryDialogs overview={overview(true)} canClear={false} mutating={false} setMutating={vi.fn()} onChanged={vi.fn(async () => undefined)} />);
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(ru.telegram.historyOperations) }));
+    fireEvent.click(await screen.findByRole('button', { name: ru.telegram.historyClear }));
+    fireEvent.click(await screen.findByRole('button', { name: ru.telegram.historyClearSafe }));
+    await waitFor(() => expect(api.clearTelegramOperationHistory).toHaveBeenCalledWith('safe'));
+  });
+
+  it('passes the status filter to the list request', async () => {
+    api.listTelegramHistoryOperations.mockResolvedValue({ items: [], total: 0 });
+    render(<TelegramHistoryDialogs overview={overview(true)} canClear={false} mutating={false} setMutating={vi.fn()} onChanged={vi.fn(async () => undefined)} />);
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(ru.telegram.historyOperations) }));
+    const select = await screen.findByRole('combobox');
+    fireEvent.change(select, { target: { value: 'failed' } });
+    await waitFor(() => expect(api.listTelegramHistoryOperations).toHaveBeenLastCalledWith(expect.any(Number), 0, undefined, 'failed'));
   });
 
   it('forgets missing bindings through the confirmation dialog', async () => {

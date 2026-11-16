@@ -272,7 +272,7 @@ def list_drift_findings(self, *, status: str = "open", limit: int = 100, offset:
             raise error_type("limit must be an integer from 1 to 200")
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise error_type("offset must be a non-negative integer")
-        clause = "" if status == "all" else "WHERE finding.status = ?"
+        clause = "WHERE finding.hidden_at IS NULL" if status == "all" else "WHERE finding.hidden_at IS NULL AND finding.status = ?"
         parameters = (limit, offset) if status == "all" else (status, limit, offset)
         with connect(self._db_path) as conn:
             rows = conn.execute(

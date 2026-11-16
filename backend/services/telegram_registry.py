@@ -2156,23 +2156,26 @@ class TelegramRegistry:
     def list_provisioning_jobs(self, *, limit: int = 100) -> list[ProvisioningJobStatus]:
         return _telegram_registry_provisioning.list_provisioning_jobs(self, limit=limit, ProvisioningJobStatus=ProvisioningJobStatus, ProvisioningAttemptStatus=ProvisioningAttemptStatus, TelegramRegistryError=TelegramRegistryError)
 
-    def list_provisioning_jobs_page(self, *, limit: int = 100, offset: int = 0) -> tuple[list[ProvisioningJobStatus], int]:
-        return _telegram_registry_provisioning.list_provisioning_jobs_page(self, limit=limit, offset=offset, ProvisioningJobStatus=ProvisioningJobStatus, ProvisioningAttemptStatus=ProvisioningAttemptStatus, TelegramRegistryError=TelegramRegistryError)
+    def list_provisioning_jobs_page(self, *, limit: int = 100, offset: int = 0, status: str = "all") -> tuple[list[ProvisioningJobStatus], int]:
+        return _telegram_registry_provisioning.list_provisioning_jobs_page(self, limit=limit, offset=offset, status=status, ProvisioningJobStatus=ProvisioningJobStatus, ProvisioningAttemptStatus=ProvisioningAttemptStatus, TelegramRegistryError=TelegramRegistryError)
 
-    def clear_terminal_provisioning_history(self, *, idempotency_key: object, cleared_by: object) -> int:
-        return _telegram_registry_provisioning.clear_terminal_provisioning_history(self, idempotency_key=idempotency_key, cleared_by=cleared_by, _nonempty=_nonempty, _payload_digest=_payload_digest, TelegramRegistryError=TelegramRegistryError, IdempotencyConflictError=IdempotencyConflictError)
+    def clear_terminal_provisioning_history(self, *, idempotency_key: object, cleared_by: object, mode: str = "safe") -> int | dict[str, int]:
+        return _telegram_registry_provisioning.clear_terminal_provisioning_history(self, idempotency_key=idempotency_key, cleared_by=cleared_by, mode=mode, _nonempty=_nonempty, _payload_digest=_payload_digest, TelegramRegistryError=TelegramRegistryError, IdempotencyConflictError=IdempotencyConflictError)
 
     def history_overview(self) -> dict[str, dict[str, int]]:
         return _telegram_registry_provisioning.history_overview(self)
 
-    def history_clear_count(self, section: str, node_id: int | None = None) -> int:
-        return _telegram_registry_provisioning.history_clear_count(self, section=section, node_id=node_id, _positive_int=_positive_int, TelegramRegistryError=TelegramRegistryError)
+    def history_clear_count(self, section: str, node_id: int | None = None, mode: str = "safe") -> int:
+        return _telegram_registry_provisioning.history_clear_count(self, section=section, node_id=node_id, mode=mode, _positive_int=_positive_int, TelegramRegistryError=TelegramRegistryError)
 
     def list_missing_binding_nodes(self) -> list[dict[str, Any]]:
         return _telegram_registry_provisioning.list_missing_binding_nodes(self)
 
-    def list_customer_operations_page(self, *, limit: int = 100, offset: int = 0) -> tuple[list[CustomerOperationStatus], int]:
-        return _telegram_registry_provisioning.list_customer_operations_page(self, limit=limit, offset=offset, TelegramRegistryError=TelegramRegistryError, CustomerOperationStatus=CustomerOperationStatus)
+    def list_customer_operations_page(self, *, limit: int = 100, offset: int = 0, status: str = "all") -> tuple[list[CustomerOperationStatus], int]:
+        return _telegram_registry_provisioning.list_customer_operations_page(self, limit=limit, offset=offset, status=status, TelegramRegistryError=TelegramRegistryError, CustomerOperationStatus=CustomerOperationStatus)
+
+    def list_drift_page(self, *, status: str = "all", limit: int = 100, offset: int = 0) -> tuple[list[DriftFinding], int]:
+        return _telegram_registry_provisioning.list_drift_page(self, status=status, limit=limit, offset=offset, TelegramRegistryError=TelegramRegistryError, DriftFinding=DriftFinding)
 
     def dismissed_operation_ids(self, operation_ids: list[int]) -> set[int]:
         return _telegram_registry_provisioning.dismissed_operation_ids(self, operation_ids=operation_ids)
@@ -2180,14 +2183,17 @@ class TelegramRegistry:
     def list_bindings_page(self, *, management_state: str | None = None, limit: int = 100, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
         return _telegram_registry_provisioning.list_bindings_page(self, management_state=management_state, limit=limit, offset=offset, TelegramRegistryError=TelegramRegistryError)
 
-    def list_audit_page(self, *, limit: int = 100, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
-        return _telegram_registry_provisioning.list_audit_page(self, limit=limit, offset=offset, TelegramRegistryError=TelegramRegistryError)
+    def list_audit_page(self, *, limit: int = 100, offset: int = 0, outcome: str = "all") -> tuple[list[dict[str, Any]], int]:
+        return _telegram_registry_provisioning.list_audit_page(self, limit=limit, offset=offset, outcome=outcome, TelegramRegistryError=TelegramRegistryError)
 
-    def clear_customer_operation_history(self, *, idempotency_key: object, cleared_by: object) -> int:
-        return _telegram_registry_provisioning.clear_customer_operation_history(self, idempotency_key=idempotency_key, cleared_by=cleared_by, _nonempty=_nonempty, _payload_digest=_payload_digest, IdempotencyConflictError=IdempotencyConflictError)
+    def clear_customer_operation_history(self, *, idempotency_key: object, cleared_by: object, mode: str = "safe") -> int | dict[str, int]:
+        return _telegram_registry_provisioning.clear_customer_operation_history(self, idempotency_key=idempotency_key, cleared_by=cleared_by, mode=mode, _nonempty=_nonempty, _payload_digest=_payload_digest, TelegramRegistryError=TelegramRegistryError, IdempotencyConflictError=IdempotencyConflictError)
 
-    def clear_drift_history(self, *, idempotency_key: object, cleared_by: object) -> int:
-        return _telegram_registry_provisioning.clear_drift_history(self, idempotency_key=idempotency_key, cleared_by=cleared_by, _nonempty=_nonempty, _payload_digest=_payload_digest, IdempotencyConflictError=IdempotencyConflictError)
+    def clear_drift_history(self, *, idempotency_key: object, cleared_by: object, mode: str = "safe") -> int | dict[str, int]:
+        return _telegram_registry_provisioning.clear_drift_history(self, idempotency_key=idempotency_key, cleared_by=cleared_by, mode=mode, _nonempty=_nonempty, _payload_digest=_payload_digest, TelegramRegistryError=TelegramRegistryError, IdempotencyConflictError=IdempotencyConflictError)
+
+    def clear_audit_history(self, *, idempotency_key: object, cleared_by: object) -> dict[str, int]:
+        return _telegram_registry_provisioning.clear_audit_history(self, idempotency_key=idempotency_key, cleared_by=cleared_by, _nonempty=_nonempty, _payload_digest=_payload_digest, IdempotencyConflictError=IdempotencyConflictError)
 
     def forget_all_missing_bindings(self, *, node_id: int | None, actor: object, idempotency_key: object) -> dict[str, Any]:
         return _telegram_registry_provisioning.forget_all_missing_bindings(self, node_id=node_id, actor=actor, idempotency_key=idempotency_key, _nonempty=_nonempty, _payload_digest=_payload_digest, _positive_int=_positive_int, IdempotencyConflictError=IdempotencyConflictError)
