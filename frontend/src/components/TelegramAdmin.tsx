@@ -797,10 +797,10 @@ export const TelegramAdmin: React.FC = () => {
   const clearJobHistory = async () => {
     setMutating(true);
     try {
-      const deletedCount = await clearTelegramJobHistory();
+      const result = await clearTelegramJobHistory();
       setIsJobHistoryClearConfirmOpen(false);
       await Promise.all([loadOperations(), loadJobHistory(1)]);
-      toast(t('telegram.clearJobsHistoryDone', { count: deletedCount }), 'success');
+      toast(t('telegram.clearJobsHistoryDone', { count: result.deleted_count }), 'success');
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {

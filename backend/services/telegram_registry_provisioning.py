@@ -141,24 +141,30 @@ def list_provisioning_jobs(self, *, limit: int=100, ProvisioningJobStatus, Provi
     items, _total = self.list_provisioning_jobs_page(limit=limit, offset=0)
     return items
 
-def list_provisioning_jobs_page(self, *, limit: int=100, offset: int=0, ProvisioningJobStatus, ProvisioningAttemptStatus, TelegramRegistryError) -> Any:
+def list_provisioning_jobs_page(self, *, limit: int=100, offset: int=0, status: str = "all", ProvisioningJobStatus, ProvisioningAttemptStatus, TelegramRegistryError) -> Any:
     """Return a bounded page plus the exact local history size for the admin UI."""
 
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
         raise TelegramRegistryError("limit must be an integer from 1 to 200")
     if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
         raise TelegramRegistryError("offset must be a non-negative integer")
+    statuses = {"queued", "running", "partial", "succeeded", "failed", "cancelled"}
+    if status != "all" and status not in statuses:
+        raise TelegramRegistryError("job status is invalid")
+    clause = "hidden_at IS NULL" if status == "all" else "hidden_at IS NULL AND status = ?"
+    args = () if status == "all" else (status,)
     with connect(self._db_path) as conn:
-        total = int(conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0])
+        total = int(conn.execute(f"SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE {clause}", args).fetchone()[0])
         jobs = conn.execute(
-            """
+            f"""
                 SELECT j.id, j.customer_id, c.email_display, j.trigger, j.status, j.attempt_count,
                        j.row_version, j.created_at, j.finished_at
                 FROM telegram_provisioning_jobs AS j
                 JOIN customers AS c ON c.id = j.customer_id
+                WHERE j.hidden_at IS NULL {"AND j.status = ?" if status != "all" else ""}
                 ORDER BY j.created_at DESC, j.id DESC LIMIT ? OFFSET ?
                 """,
-            (limit, offset),
+            ((*args, limit, offset)),
         ).fetchall()
         attempts = conn.execute(
             """
@@ -190,47 +196,56 @@ def list_provisioning_jobs_page(self, *, limit: int=100, offset: int=0, Provisio
         for job in jobs
     ], total
 
-def clear_terminal_provisioning_history(self, *, idempotency_key: object, cleared_by: object, _nonempty, _payload_digest, TelegramRegistryError, IdempotencyConflictError) -> int:
+def clear_terminal_provisioning_history(self, *, idempotency_key: object, cleared_by: object, mode: str = "safe", _nonempty, _payload_digest, TelegramRegistryError, IdempotencyConflictError) -> int | dict[str, int]:
     """Delete only completed local job history; active/recoverable work is never a target."""
 
     key = _nonempty(idempotency_key, "idempotency_key")
     actor = _nonempty(cleared_by, "cleared_by")
+    if mode not in {"safe", "all"}:
+        raise TelegramRegistryError("history clear mode is invalid")
     terminal_statuses = ("succeeded", "failed", "cancelled")
-    payload = {"terminal_statuses": terminal_statuses}
+    payload = {"terminal_statuses": terminal_statuses, "mode": mode}
     digest = _payload_digest(payload)
+    scope = "provisioning_history_clear"
     with connect(self._db_path) as conn:
         receipt = conn.execute(
             "SELECT payload_digest, result_json FROM telegram_command_receipts "
-            "WHERE scope = 'provisioning_history_clear' AND idempotency_key = ?",
-            (key,),
+            "WHERE scope = ? AND idempotency_key = ?", (scope, key),
         ).fetchone()
         if receipt is not None:
             if str(receipt[0]) != digest:
                 raise IdempotencyConflictError("idempotency key was already used for another command")
             try:
-                return int(json.loads(str(receipt[1]))["deleted_count"])
+                result = json.loads(str(receipt[1]))
+                return result if mode == "all" else int(result["deleted_count"])
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 raise TelegramRegistryError("stored history-clear receipt is invalid") from exc
         placeholders = ",".join("?" for _ in terminal_statuses)
         deleted_count = conn.execute(
-            f"DELETE FROM telegram_provisioning_jobs WHERE status IN ({placeholders}) AND NOT EXISTS (SELECT 1 FROM telegram_provisioning_attempts pa WHERE pa.job_id=telegram_provisioning_jobs.id AND pa.status='succeeded' AND pa.id=(SELECT MAX(a2.id) FROM telegram_provisioning_attempts a2 JOIN telegram_provisioning_jobs j2 ON j2.id=a2.job_id WHERE j2.customer_id=telegram_provisioning_jobs.customer_id AND a2.node_id=pa.node_id AND a2.remote_client_id IS pa.remote_client_id AND a2.status='succeeded'))",
+            f"DELETE FROM telegram_provisioning_jobs WHERE hidden_at IS NULL AND status IN ({placeholders}) AND NOT EXISTS (SELECT 1 FROM telegram_provisioning_attempts pa WHERE pa.job_id=telegram_provisioning_jobs.id AND pa.status='succeeded' AND pa.id=(SELECT MAX(a2.id) FROM telegram_provisioning_attempts a2 JOIN telegram_provisioning_jobs j2 ON j2.id=a2.job_id WHERE j2.customer_id=telegram_provisioning_jobs.customer_id AND a2.node_id=pa.node_id AND a2.remote_client_id IS pa.remote_client_id AND a2.status='succeeded'))",
             terminal_statuses,
         ).rowcount
-        result_json = json.dumps({"deleted_count": deleted_count}, separators=(",", ":"))
+        hidden_count = 0
+        if mode == "all":
+            hidden_count = conn.execute(
+                "UPDATE telegram_provisioning_jobs SET hidden_at = CURRENT_TIMESTAMP "
+                "WHERE hidden_at IS NULL AND status IN ('succeeded','failed','cancelled')",
+            ).rowcount
+        result = {"deleted_count": int(deleted_count), "hidden_count": int(hidden_count)}
+        result_json = json.dumps(result, separators=(",", ":"))
         conn.execute(
             "INSERT INTO telegram_command_receipts(scope, idempotency_key, payload_digest, result_json) "
-            "VALUES ('provisioning_history_clear', ?, ?, ?)",
-            (key, digest, result_json),
+            "VALUES (?, ?, ?, ?)", (scope, key, digest, result_json),
         )
         conn.execute(
             """
                 INSERT INTO telegram_audit_log
                     (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
-                VALUES ('provisioning_history_cleared', 'admin', ?, 'provisioning_history', 'terminal', ?)
+                VALUES ('provisioning_history_cleared', 'admin', ?, 'provisioning_history', ?, ?)
                 """,
-            (actor, _payload_digest({"deleted_count": deleted_count})),
+            (actor, mode, _payload_digest(result)),
         )
-    return deleted_count
+    return result if mode == "all" else deleted_count
 
 def history_overview(self) -> dict[str, dict[str, int]]:
     """Return cheap counts for the admin history dashboard."""
@@ -240,20 +255,20 @@ def history_overview(self) -> dict[str, dict[str, int]]:
             return int(row[0]) if row else 0
         overview = {
             "jobs": {
-                "total": count("SELECT COUNT(*) FROM telegram_provisioning_jobs"),
-                "needs_attention": count("SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE status IN ('partial','failed')"),
-                "terminal": count("SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE status IN ('succeeded','failed','cancelled')"),
+                "total": count("SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE hidden_at IS NULL"),
+                "needs_attention": count("SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE hidden_at IS NULL AND status IN ('partial','failed')"),
+                "terminal": count("SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE hidden_at IS NULL AND status IN ('succeeded','failed','cancelled')"),
             },
             "operations": {
-                "total": count("SELECT COUNT(*) FROM telegram_customer_operations"),
-                "terminal": count("SELECT COUNT(*) FROM telegram_customer_operations WHERE status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL"),
-                "needs_attention": count("SELECT COUNT(*) FROM telegram_customer_operations WHERE status IN ('partial','failed','running') AND dismissed_at IS NULL"),
+                "total": count("SELECT COUNT(*) FROM telegram_customer_operations WHERE hidden_at IS NULL"),
+                "terminal": count("SELECT COUNT(*) FROM telegram_customer_operations WHERE hidden_at IS NULL AND (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL)"),
+                "needs_attention": count("SELECT COUNT(*) FROM telegram_customer_operations WHERE hidden_at IS NULL AND status IN ('partial','failed','running') AND dismissed_at IS NULL"),
             },
             "drift": {
-                "open": count("SELECT COUNT(*) FROM telegram_drift_findings WHERE status = 'open'"),
-                "ignored": count("SELECT COUNT(*) FROM telegram_drift_findings WHERE status = 'ignored'"),
-                "resolved": count("SELECT COUNT(*) FROM telegram_drift_findings WHERE status = 'resolved'"),
-                "adopted": count("SELECT COUNT(*) FROM telegram_drift_findings WHERE status = 'adopted'"),
+                "open": count("SELECT COUNT(*) FROM telegram_drift_findings WHERE hidden_at IS NULL AND status = 'open'"),
+                "ignored": count("SELECT COUNT(*) FROM telegram_drift_findings WHERE hidden_at IS NULL AND status = 'ignored'"),
+                "resolved": count("SELECT COUNT(*) FROM telegram_drift_findings WHERE hidden_at IS NULL AND status = 'resolved'"),
+                "adopted": count("SELECT COUNT(*) FROM telegram_drift_findings WHERE hidden_at IS NULL AND status = 'adopted'"),
             },
             "missing_bindings": {
                 "missing": count("SELECT COUNT(*) FROM customer_node_bindings WHERE management_state = 'missing'"),
@@ -266,18 +281,24 @@ def history_overview(self) -> dict[str, dict[str, int]]:
         overview[section]["clearable"] = self.history_clear_count(section)
     return overview
 
-def history_clear_count(self, section: str, node_id: int | None=None, *, _positive_int, TelegramRegistryError) -> int:
+def history_clear_count(self, section: str, node_id: int | None=None, mode: str = "safe", *, _positive_int, TelegramRegistryError) -> int:
+    if mode not in {"safe", "all"}:
+        raise TelegramRegistryError("history clear mode is invalid")
     if node_id is not None:
         node_id = _positive_int(node_id, "node_id")
     queries = {
-        "jobs": "SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE status IN ('succeeded','failed','cancelled') AND NOT EXISTS (SELECT 1 FROM telegram_provisioning_attempts pa WHERE pa.job_id=telegram_provisioning_jobs.id AND pa.status='succeeded' AND pa.id=(SELECT MAX(a2.id) FROM telegram_provisioning_attempts a2 JOIN telegram_provisioning_jobs j2 ON j2.id=a2.job_id WHERE j2.customer_id=telegram_provisioning_jobs.customer_id AND a2.node_id=pa.node_id AND a2.remote_client_id IS pa.remote_client_id AND a2.status='succeeded'))",
-        "operations": "SELECT COUNT(*) FROM telegram_customer_operations WHERE (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id) AND NOT EXISTS (SELECT 1 FROM customer_node_bindings sb WHERE sb.suspended_by_operation_id=telegram_customer_operations.id)",
-        "drift": "SELECT COUNT(*) FROM telegram_drift_findings WHERE status IN ('resolved','adopted') OR (status='ignored' AND kind IN ('binding_missing','binding_conflict') AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict')))",
+        "jobs": "SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE hidden_at IS NULL AND status IN ('succeeded','failed','cancelled') AND NOT EXISTS (SELECT 1 FROM telegram_provisioning_attempts pa WHERE pa.job_id=telegram_provisioning_jobs.id AND pa.status='succeeded' AND pa.id=(SELECT MAX(a2.id) FROM telegram_provisioning_attempts a2 JOIN telegram_provisioning_jobs j2 ON j2.id=a2.job_id WHERE j2.customer_id=telegram_provisioning_jobs.customer_id AND a2.node_id=pa.node_id AND a2.remote_client_id IS pa.remote_client_id AND a2.status='succeeded'))",
+        "operations": "SELECT COUNT(*) FROM telegram_customer_operations WHERE hidden_at IS NULL AND (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id) AND NOT EXISTS (SELECT 1 FROM customer_node_bindings sb WHERE sb.suspended_by_operation_id=telegram_customer_operations.id)",
+        "drift": "SELECT COUNT(*) FROM telegram_drift_findings WHERE hidden_at IS NULL AND (status IN ('resolved','adopted') OR (status='ignored' AND kind IN ('binding_missing','binding_conflict') AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict'))))",
+        "audit": "SELECT COUNT(*) FROM telegram_audit_log",
         "bindings": "SELECT COUNT(*) FROM customer_node_bindings b WHERE b.management_state='missing' AND (? IS NULL OR b.node_id=?) AND NOT EXISTS (SELECT 1 FROM telegram_customer_operation_attempts a JOIN telegram_customer_operations o ON o.id=a.operation_id WHERE a.binding_id=b.id AND o.status IN ('queued','running','partial') AND o.dismissed_at IS NULL)",
     }
     if section not in queries or (node_id is not None and section != "bindings"):
         raise TelegramRegistryError("invalid history section")
     with connect(self._db_path) as conn:
+        if mode == "all" and section in {"jobs", "operations", "drift"}:
+            all_queries = {"jobs": "SELECT COUNT(*) FROM telegram_provisioning_jobs WHERE hidden_at IS NULL AND status IN ('succeeded','failed','cancelled')", "operations": "SELECT COUNT(*) FROM telegram_customer_operations WHERE hidden_at IS NULL AND (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL)", "drift": "SELECT COUNT(*) FROM telegram_drift_findings WHERE hidden_at IS NULL AND status <> 'open'"}
+            return int(conn.execute(all_queries[section]).fetchone()[0])
         return int(conn.execute(queries[section], (node_id, node_id) if section == "bindings" else ()).fetchone()[0])
 
 def list_missing_binding_nodes(self) -> list[dict[str, Any]]:
@@ -285,18 +306,40 @@ def list_missing_binding_nodes(self) -> list[dict[str, Any]]:
         rows = conn.execute("SELECT DISTINCT n.id, n.name FROM nodes n JOIN customer_node_bindings b ON b.node_id=n.id WHERE b.management_state='missing' ORDER BY n.name COLLATE NOCASE, n.id").fetchall()
     return [{"node_id": int(row[0]), "node_name": str(row[1])} for row in rows]
 
-def list_customer_operations_page(self, *, limit: int=100, offset: int=0, TelegramRegistryError, CustomerOperationStatus) -> Any:
+def list_customer_operations_page(self, *, limit: int=100, offset: int=0, status: str = "all", TelegramRegistryError, CustomerOperationStatus) -> Any:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
         raise TelegramRegistryError("limit must be an integer from 1 to 200")
     if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
         raise TelegramRegistryError("offset must be a non-negative integer")
+    statuses = {"previewed", "queued", "running", "partial", "succeeded", "failed"}
+    if status != "all" and status not in statuses:
+        raise TelegramRegistryError("operation status is invalid")
+    clause = "hidden_at IS NULL" if status == "all" else "hidden_at IS NULL AND status = ?"
+    args = () if status == "all" else (status,)
     with connect(self._db_path) as conn:
-        total = int(conn.execute("SELECT COUNT(*) FROM telegram_customer_operations").fetchone()[0])
+        total = int(conn.execute(f"SELECT COUNT(*) FROM telegram_customer_operations WHERE {clause}", args).fetchone()[0])
         ids = [int(row[0]) for row in conn.execute(
-            "SELECT id FROM telegram_customer_operations ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"SELECT id FROM telegram_customer_operations WHERE {clause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            (*args, limit, offset),
         ).fetchall()]
         return [self._get_customer_operation_from_conn(conn, item) for item in ids], total
+
+def list_drift_page(self, *, status: str = "all", limit: int = 100, offset: int = 0, TelegramRegistryError, DriftFinding) -> tuple[list[Any], int]:
+    if status not in {"all", "open", "resolved", "adopted", "ignored"}:
+        raise TelegramRegistryError("drift status is invalid")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200 or not isinstance(offset, int) or offset < 0:
+        raise TelegramRegistryError("invalid pagination")
+    where = "hidden_at IS NULL" + (" AND status = ?" if status != "all" else "")
+    args = (status,) if status != "all" else ()
+    with connect(self._db_path) as conn:
+        total = int(conn.execute(f"SELECT COUNT(*) FROM telegram_drift_findings WHERE {where}", args).fetchone()[0])
+        rows = conn.execute(f"SELECT id,kind,customer_id,node_id,remote_email,remote_client_id,remote_sub_id,status,row_version,last_seen_at FROM telegram_drift_findings WHERE {where} ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END,last_seen_at DESC,id DESC LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()
+        result = []
+        for row in rows:
+            customer = conn.execute("SELECT email_display FROM customers WHERE id=?", (row[2],)).fetchone() if row[2] is not None else None
+            node = conn.execute("SELECT name FROM nodes WHERE id=?", (row[3],)).fetchone()
+            result.append(DriftFinding(finding_id=int(row[0]), kind=str(row[1]), customer_id=int(row[2]) if row[2] is not None else None, customer_email=str(customer[0]) if customer else None, node_id=int(row[3]), node_name=str(node[0]) if node else "", remote_email=str(row[4]), remote_client_id=str(row[5]), remote_sub_id=str(row[6]), status=str(row[7]), row_version=int(row[8]), last_seen_at=str(row[9])))
+    return result, total
 
 def dismissed_operation_ids(self, operation_ids: list[int]) -> set[int]:
     ids = [int(item) for item in operation_ids]
@@ -323,45 +366,78 @@ def list_bindings_page(self, *, management_state: str | None=None, limit: int=10
         ).fetchall()
     return [{"binding_id": int(r[0]), "customer_id": int(r[1]), "customer_email": str(r[2]), "node_id": int(r[3]), "node_name": str(r[4]), "management_state": str(r[5]), "desired_enabled": bool(r[6]) if r[6] is not None else None} for r in rows], total
 
-def list_audit_page(self, *, limit: int=100, offset: int=0, TelegramRegistryError) -> tuple[list[dict[str, Any]], int]:
+def list_audit_page(self, *, limit: int=100, offset: int=0, outcome: str = "all", TelegramRegistryError) -> tuple[list[dict[str, Any]], int]:
     if not isinstance(limit, int) or not 1 <= limit <= 200 or not isinstance(offset, int) or offset < 0:
         raise TelegramRegistryError("invalid pagination")
+    if outcome not in {"all", "error", "success"}:
+        raise TelegramRegistryError("audit outcome is invalid")
+    clause = ""
+    if outcome == "error":
+        clause = " WHERE lower(event_type) LIKE '%error%' OR lower(event_type) LIKE '%fail%'"
+    elif outcome == "success":
+        clause = " WHERE lower(event_type) NOT LIKE '%error%' AND lower(event_type) NOT LIKE '%fail%'"
     with connect(self._db_path) as conn:
-        total = int(conn.execute("SELECT COUNT(*) FROM telegram_audit_log").fetchone()[0])
-        rows = conn.execute("SELECT id,event_type,actor_type,actor_id,entity_type,entity_id,created_at FROM telegram_audit_log ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+        total = int(conn.execute(f"SELECT COUNT(*) FROM telegram_audit_log{clause}").fetchone()[0])
+        rows = conn.execute(f"SELECT id,event_type,actor_type,actor_id,entity_type,entity_id,created_at FROM telegram_audit_log{clause} ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
     return [{"id": int(r[0]), "event_type": str(r[1]), "actor_type": str(r[2]), "actor_id": r[3], "entity_type": str(r[4]), "entity_id": str(r[5]), "created_at": str(r[6])} for r in rows], total
 
-def clear_customer_operation_history(self, *, idempotency_key: object, cleared_by: object, _nonempty, _payload_digest, IdempotencyConflictError) -> int:
+def clear_customer_operation_history(self, *, idempotency_key: object, cleared_by: object, mode: str = "safe", _nonempty, _payload_digest, TelegramRegistryError, IdempotencyConflictError) -> int | dict[str, int]:
     key, actor = _nonempty(idempotency_key, "idempotency_key"), _nonempty(cleared_by, "cleared_by")
-    digest = _payload_digest({"statuses": ("succeeded", "cancelled", "dismissed")})
+    if mode not in {"safe", "all"}:
+        raise TelegramRegistryError("history clear mode is invalid")
+    digest = _payload_digest({"statuses": ("succeeded", "cancelled", "dismissed"), "mode": mode})
+    scope = "customer_operation_history_clear"
     with connect(self._db_path) as conn:
-        receipt = conn.execute("SELECT payload_digest,result_json FROM telegram_command_receipts WHERE scope='customer_operation_history_clear' AND idempotency_key=?", (key,)).fetchone()
+        receipt = conn.execute("SELECT payload_digest,result_json FROM telegram_command_receipts WHERE scope=? AND idempotency_key=?", (scope, key)).fetchone()
         if receipt:
             if str(receipt[0]) != digest:
                 raise IdempotencyConflictError("idempotency key was already used for another command")
-            return int(json.loads(str(receipt[1]))["deleted_count"])
-        ids = [r[0] for r in conn.execute("SELECT id FROM telegram_customer_operations WHERE (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id) AND NOT EXISTS (SELECT 1 FROM customer_node_bindings sb WHERE sb.suspended_by_operation_id=telegram_customer_operations.id)").fetchall()]
+            result = json.loads(str(receipt[1]))
+            return result if mode == "all" else int(result["deleted_count"])
+        ids = [r[0] for r in conn.execute("SELECT id FROM telegram_customer_operations WHERE hidden_at IS NULL AND (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id) AND NOT EXISTS (SELECT 1 FROM customer_node_bindings sb WHERE sb.suspended_by_operation_id=telegram_customer_operations.id)").fetchall()]
         if ids:
             ph = ",".join("?" for _ in ids)
             conn.execute(f"DELETE FROM telegram_customer_operations WHERE id IN ({ph})", ids)
-        result = {"deleted_count": len(ids)}
-        conn.execute("INSERT INTO telegram_command_receipts(scope,idempotency_key,payload_digest,result_json) VALUES('customer_operation_history_clear',?,?,?)", (key, digest, json.dumps(result, separators=(",", ":"))))
-        conn.execute("INSERT INTO telegram_audit_log(event_type,actor_type,actor_id,entity_type,entity_id,payload_digest) VALUES('customer_operation_history_cleared','admin',?,'customer_operation_history','terminal',?)", (actor, digest))
-    return len(ids)
+        hidden = conn.execute("UPDATE telegram_customer_operations SET hidden_at = CURRENT_TIMESTAMP WHERE hidden_at IS NULL AND (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL)").rowcount if mode == "all" else 0
+        result = {"deleted_count": len(ids), "hidden_count": hidden}
+        conn.execute("INSERT INTO telegram_command_receipts(scope,idempotency_key,payload_digest,result_json) VALUES(?,?,?,?)", (scope, key, digest, json.dumps(result, separators=(",", ":"))))
+        conn.execute("INSERT INTO telegram_audit_log(event_type,actor_type,actor_id,entity_type,entity_id,payload_digest) VALUES('customer_operation_history_cleared','admin',?,'customer_operation_history',?,?)", (actor, mode, digest))
+    return result if mode == "all" else len(ids)
 
-def clear_drift_history(self, *, idempotency_key: object, cleared_by: object, _nonempty, _payload_digest, IdempotencyConflictError) -> int:
+def clear_drift_history(self, *, idempotency_key: object, cleared_by: object, mode: str = "safe", _nonempty, _payload_digest, TelegramRegistryError, IdempotencyConflictError) -> int | dict[str, int]:
     key, actor = _nonempty(idempotency_key, "idempotency_key"), _nonempty(cleared_by, "cleared_by")
-    digest = _payload_digest({"statuses": ("resolved", "adopted", "ignored_safe")})
+    if mode not in {"safe", "all"}:
+        raise TelegramRegistryError("history clear mode is invalid")
+    digest = _payload_digest({"statuses": ("resolved", "adopted", "ignored_safe"), "mode": mode})
+    scope = "drift_history_clear"
     with connect(self._db_path) as conn:
-        receipt = conn.execute("SELECT payload_digest,result_json FROM telegram_command_receipts WHERE scope='drift_history_clear' AND idempotency_key=?", (key,)).fetchone()
+        receipt = conn.execute("SELECT payload_digest,result_json FROM telegram_command_receipts WHERE scope=? AND idempotency_key=?", (scope, key)).fetchone()
         if receipt:
             if str(receipt[0]) != digest:
                 raise IdempotencyConflictError("idempotency key was already used for another command")
-            return int(json.loads(str(receipt[1]))["deleted_count"])
-        deleted = conn.execute("DELETE FROM telegram_drift_findings WHERE status IN ('resolved','adopted') OR (status='ignored' AND kind IN ('binding_missing','binding_conflict') AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict')))" ).rowcount
-        conn.execute("INSERT INTO telegram_command_receipts(scope,idempotency_key,payload_digest,result_json) VALUES('drift_history_clear',?,?,?)", (key, digest, json.dumps({"deleted_count": deleted}, separators=(",", ":"))))
-        conn.execute("INSERT INTO telegram_audit_log(event_type,actor_type,actor_id,entity_type,entity_id,payload_digest) VALUES('drift_history_cleared','admin',?,'drift_history','terminal',?)", (actor, digest))
-    return int(deleted)
+            result = json.loads(str(receipt[1]))
+            return result if mode == "all" else int(result["deleted_count"])
+        deleted = conn.execute("DELETE FROM telegram_drift_findings WHERE hidden_at IS NULL AND (status IN ('resolved','adopted') OR (status='ignored' AND kind IN ('binding_missing','binding_conflict') AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict'))))").rowcount
+        hidden = conn.execute("UPDATE telegram_drift_findings SET hidden_at = CURRENT_TIMESTAMP WHERE hidden_at IS NULL AND status <> 'open'").rowcount if mode == "all" else 0
+        result = {"deleted_count": int(deleted), "hidden_count": int(hidden)}
+        conn.execute("INSERT INTO telegram_command_receipts(scope,idempotency_key,payload_digest,result_json) VALUES(?,?,?,?)", (scope, key, digest, json.dumps(result, separators=(",", ":"))))
+        conn.execute("INSERT INTO telegram_audit_log(event_type,actor_type,actor_id,entity_type,entity_id,payload_digest) VALUES('drift_history_cleared','admin',?,'drift_history',?,?)", (actor, mode, digest))
+    return result if mode == "all" else int(deleted)
+
+def clear_audit_history(self, *, idempotency_key: object, cleared_by: object, _nonempty, _payload_digest, IdempotencyConflictError) -> dict[str, int]:
+    key, actor = _nonempty(idempotency_key, "idempotency_key"), _nonempty(cleared_by, "cleared_by")
+    digest = _payload_digest({"section": "audit"})
+    with connect(self._db_path) as conn:
+        receipt = conn.execute("SELECT payload_digest,result_json FROM telegram_command_receipts WHERE scope='audit_history_clear' AND idempotency_key=?", (key,)).fetchone()
+        if receipt:
+            if str(receipt[0]) != digest:
+                raise IdempotencyConflictError("idempotency key was already used for another command")
+            return json.loads(str(receipt[1]))
+        deleted = conn.execute("DELETE FROM telegram_audit_log").rowcount
+        result = {"deleted_count": int(deleted), "hidden_count": 0}
+        conn.execute("INSERT INTO telegram_audit_log(event_type,actor_type,actor_id,entity_type,entity_id,payload_digest) VALUES('audit_cleared','admin',?,'audit','all',?)", (actor, _payload_digest(result)))
+        conn.execute("INSERT INTO telegram_command_receipts(scope,idempotency_key,payload_digest,result_json) VALUES('audit_history_clear',?,?,?)", (key, digest, json.dumps(result, separators=(",", ":"))))
+    return result
 
 def forget_all_missing_bindings(self, *, node_id: int | None, actor: object, idempotency_key: object, _nonempty, _payload_digest, _positive_int, IdempotencyConflictError) -> dict[str, Any]:
     actor_id = _nonempty(actor, "actor")
@@ -392,8 +468,8 @@ def run_history_retention(self) -> dict[str, int]:
     with connect(self._db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         params = (f"-{days} days",)
-        op = conn.execute("DELETE FROM telegram_customer_operations WHERE (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND COALESCE(finished_at, dismissed_at, updated_at, created_at) < datetime('now', ?) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id) AND NOT EXISTS (SELECT 1 FROM customer_node_bindings sb WHERE sb.suspended_by_operation_id=telegram_customer_operations.id)", params).rowcount if days else 0
-        finding = conn.execute("DELETE FROM telegram_drift_findings WHERE status IN ('resolved','adopted') AND COALESCE(resolved_at,last_seen_at) < datetime('now', ?)", params).rowcount if days else 0
+        op = conn.execute("DELETE FROM telegram_customer_operations WHERE hidden_at IS NULL AND (status IN ('succeeded','cancelled') OR dismissed_at IS NOT NULL) AND COALESCE(finished_at, dismissed_at, updated_at, created_at) < datetime('now', ?) AND NOT EXISTS (SELECT 1 FROM telegram_bulk_lifecycle_items bi WHERE bi.operation_id=telegram_customer_operations.id) AND NOT EXISTS (SELECT 1 FROM customer_node_bindings sb WHERE sb.suspended_by_operation_id=telegram_customer_operations.id)", params).rowcount if days else 0
+        finding = conn.execute("DELETE FROM telegram_drift_findings WHERE hidden_at IS NULL AND status IN ('resolved','adopted') AND COALESCE(resolved_at,last_seen_at) < datetime('now', ?)", params).rowcount if days else 0
         jobs = 0  # provisioning snapshots feed expiry/traffic reminders and initial-job state: only the manual clear removes them
         audit = conn.execute("DELETE FROM telegram_audit_log WHERE created_at < datetime('now', ?)", (f"-{audit_days} days",)).rowcount if audit_days else 0
         conn.execute("UPDATE telegram_drift_findings SET status='resolved', resolved_at=CURRENT_TIMESTAMP, row_version=row_version+1 WHERE status='ignored' AND kind IN ('binding_missing','binding_conflict') AND NOT EXISTS (SELECT 1 FROM customer_node_bindings b WHERE b.customer_id=telegram_drift_findings.customer_id AND b.node_id=telegram_drift_findings.node_id AND b.management_state IN ('missing','conflict'))")
@@ -531,4 +607,3 @@ def list_node_provisioning_policies(self, *, _policy_from_row, NodeProvisioningP
                 """
         ).fetchall()
     return [_policy_from_row(row) for row in rows]
-

@@ -180,6 +180,8 @@ def record_drift_findings(self, *, scanned_node_ids: object, findings: object, e
                                       ELSE telegram_drift_findings.status END,
                         resolved_at = CASE WHEN telegram_drift_findings.status IN ('resolved', 'adopted') THEN NULL
                                            ELSE telegram_drift_findings.resolved_at END,
+                        hidden_at = CASE WHEN telegram_drift_findings.status IN ('resolved', 'adopted') THEN NULL
+                                         ELSE telegram_drift_findings.hidden_at END,
                         row_version = telegram_drift_findings.row_version + 1
                     """,
                     item,
@@ -272,7 +274,7 @@ def list_drift_findings(self, *, status: str = "open", limit: int = 100, offset:
             raise error_type("limit must be an integer from 1 to 200")
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise error_type("offset must be a non-negative integer")
-        clause = "" if status == "all" else "WHERE finding.status = ?"
+        clause = "WHERE finding.hidden_at IS NULL" if status == "all" else "WHERE finding.hidden_at IS NULL AND finding.status = ?"
         parameters = (limit, offset) if status == "all" else (status, limit, offset)
         with connect(self._db_path) as conn:
             rows = conn.execute(

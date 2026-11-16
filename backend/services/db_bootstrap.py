@@ -1039,6 +1039,8 @@ def init_db(db_path: str) -> None:
         provisioning_job_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(telegram_provisioning_jobs)").fetchall()
         }
+        if "hidden_at" not in provisioning_job_columns:
+            conn.execute("ALTER TABLE telegram_provisioning_jobs ADD COLUMN hidden_at TIMESTAMP NULL")
         if "row_version" not in provisioning_job_columns:
             conn.execute(
                 "ALTER TABLE telegram_provisioning_jobs "
@@ -1245,6 +1247,8 @@ def init_db(db_path: str) -> None:
         for column_name, statement in operation_migrations:
             if column_name not in operation_columns:
                 conn.execute(statement)
+        if "hidden_at" not in operation_columns:
+            conn.execute("ALTER TABLE telegram_customer_operations ADD COLUMN hidden_at TIMESTAMP NULL")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_telegram_customer_operations_schedule "
             "ON telegram_customer_operations(status, next_attempt_at, lease_until)"
@@ -1358,6 +1362,9 @@ def init_db(db_path: str) -> None:
             "CREATE INDEX IF NOT EXISTS idx_telegram_drift_findings_open "
             "ON telegram_drift_findings(status, node_id, last_seen_at DESC)"
         )
+        drift_columns = {row[1] for row in conn.execute("PRAGMA table_info(telegram_drift_findings)").fetchall()}
+        if "hidden_at" not in drift_columns:
+            conn.execute("ALTER TABLE telegram_drift_findings ADD COLUMN hidden_at TIMESTAMP NULL")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_customer_operation_attempts
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
