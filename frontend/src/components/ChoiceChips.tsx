@@ -48,7 +48,8 @@ export function ChoiceChips<T extends ChoiceValue>({
               'inline-flex items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-2.5 text-[11px] font-medium uppercase tracking-wider text-slate-400 transition-colors hover:border-cyan-300/35 hover:text-slate-100',
               size === 'md' ? 'h-9 px-3 text-xs' : 'h-7',
               active && 'border-cyan-300/50 bg-cyan-400/10 text-cyan-200',
-              disabled && 'cursor-not-allowed opacity-50 hover:border-cyan-500/20 hover:text-slate-400',
+              disabled && 'cursor-not-allowed hover:border-cyan-500/20 hover:text-slate-400',
+              disabled && (active ? 'opacity-90' : 'opacity-40'),
             )}
             title={option.title}
             aria-pressed={active}
