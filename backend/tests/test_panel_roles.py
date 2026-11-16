@@ -155,3 +155,59 @@ def test_users_router_lists_env_and_db_users_with_candidates(tmp_path, monkeypat
         "root", "env", True, True
     )
     assert {u["username"] for u in result["users"]} == {"root", "viewer1", "op1"}
+
+
+def test_stale_inflight_lookup_cannot_restore_revoked_role():
+    calls = []
+    service = AuthService()
+
+    def lookup(_name):
+        calls.append(1)
+        # A demotion commits and invalidates the cache while this lookup is still running.
+        service.invalidate_role_cache()
+        return "admin"
+
+    service.role_lookup = lookup
+    assert service.get_user_role("alice") == "admin"  # the in-flight caller still sees what it read
+    service.role_lookup = lambda _name: "viewer"
+    assert service.get_user_role("alice") == "viewer"  # but the stale value was not cached
+
+
+def test_candidates_skip_names_the_api_would_reject(tmp_path, monkeypatch):
+    db_path = os.fspath(tmp_path / "admin.db")
+    init_db(db_path)
+    router = _router(PanelRoleStore(db_path), [])
+    monkeypatch.setattr(
+        "routers.users.pwd.getpwall",
+        lambda: [SimpleNamespace(pw_name="john.doe", pw_uid=1001), SimpleNamespace(pw_name="jane", pw_uid=1002)],
+    )
+    assert _endpoint(router, "/api/v1/users", "GET")(SimpleNamespace())["candidates"] == ["jane"]
+
+
+def test_websocket_manager_closes_sockets_whose_role_changed():
+    import asyncio
+
+    from websocket_manager import ConnectionManager
+
+    class FakeSocket:
+        def __init__(self):
+            self.closed = None
+
+        async def accept(self):
+            pass
+
+        async def close(self, code=1000):
+            self.closed = code
+
+    async def scenario():
+        manager = ConnectionManager()
+        kept, demoted = FakeSocket(), FakeSocket()
+        await manager.connect(kept, accept=False, user="a", role="admin")
+        await manager.connect(demoted, accept=False, user="b", role="operator")
+        count = await asyncio.to_thread(
+            manager.close_sockets_with_changed_role, lambda user: "admin" if user == "a" else "viewer"
+        )
+        await asyncio.sleep(0.05)
+        return count, kept.closed, demoted.closed
+
+    assert asyncio.run(scenario()) == (1, None, 1008)

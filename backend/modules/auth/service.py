@@ -83,6 +83,7 @@ class AuthService:
         self.role_lookup = role_lookup
         self._role_cache: Dict[str, Tuple[float, str]] = {}
         self._role_cache_lock = Lock()
+        self._role_cache_generation = 0
 
     # ------------------------------------------------------------------
     # Role resolution
@@ -103,6 +104,7 @@ class AuthService:
                 cached = self._role_cache.get(username)
                 if cached is not None and cached[0] > time.monotonic():
                     return cached[1]
+                generation = self._role_cache_generation
             try:
                 role = self.role_lookup(username)
             except Exception:
@@ -110,15 +112,18 @@ class AuthService:
                 role = None
             resolved_role = role if role in ROLE_RANK else "viewer"
             with self._role_cache_lock:
-                self._role_cache[username] = (
-                    time.monotonic() + ROLE_LOOKUP_CACHE_TTL_SEC,
-                    resolved_role,
-                )
+                # A change that landed mid-lookup bumped the generation: do not publish the stale role.
+                if generation == self._role_cache_generation:
+                    self._role_cache[username] = (
+                        time.monotonic() + ROLE_LOOKUP_CACHE_TTL_SEC,
+                        resolved_role,
+                    )
             return resolved_role
         return "viewer"
 
     def invalidate_role_cache(self) -> None:
         with self._role_cache_lock:
+            self._role_cache_generation += 1
             self._role_cache.clear()
 
     @staticmethod

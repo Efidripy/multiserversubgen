@@ -80,7 +80,7 @@ def build_users_router(
         ordered = sorted(users.values(), key=lambda item: (ROLE_ORDER[item["role"]], item["username"]))
         candidates = []
         for entry in pwd.getpwall():
-            if 1000 <= entry.pw_uid <= 59999 and entry.pw_name not in users:
+            if 1000 <= entry.pw_uid <= 59999 and entry.pw_name not in users and USERNAME_RE.fullmatch(entry.pw_name):
                 candidates.append(entry.pw_name)
         return {"users": ordered, "candidates": sorted(set(candidates))}
 

@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { deleteUserRole, listUsers, updateUserRole, type ManagedUser, type UserRole } from '../api/users';
+import { ChoiceChips } from './ChoiceChips';
 import { SelectMenu } from './SelectMenu';
 
 const shellClass = 'min-h-screen min-w-0 bg-[#0a0e1a] p-3 text-slate-100 sm:p-4 lg:p-6';
-const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
+const panelClass = 'min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
 const buttonClass = 'inline-flex h-9 items-center justify-center gap-2 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs font-medium text-slate-300 transition hover:border-cyan-300/40 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-45';
 const primaryButtonClass = 'inline-flex h-9 items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-300 px-3 text-xs font-medium text-[#06111f] transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
 const roleOptions = (t: (key: string) => string) => (['viewer', 'operator', 'admin'] as UserRole[]).map((role) => ({
@@ -122,7 +123,7 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
                     const locked = item.locked || item.username === currentUser;
                     return <tr key={item.username} className="border-b border-cyan-500/10 last:border-0">
                       <td className="px-2 py-3 font-mono text-slate-200">{item.username}</td>
-                      <td className="w-44 px-2 py-3"><SelectMenu value={item.role} options={roles} ariaLabel={`${t('usersAdmin.role')} ${item.username}`} disabled={locked || saving === item.username} onChange={(value) => void changeRole(item.username, value as UserRole)} /></td>
+                      <td className="px-2 py-3"><div role="group" aria-label={`${t('usersAdmin.role')} ${item.username}`}><ChoiceChips size="sm" options={roles} value={item.role} disabled={locked || saving === item.username} onChange={(value) => void changeRole(item.username, value as UserRole)} /></div></td>
                       <td className="px-2 py-3 text-slate-400">{t(`usersAdmin.sources.${item.source}`)}</td>
                       <td className="px-2 py-3 text-slate-400">{item.owner && <span className="mr-2">{t('usersAdmin.owner')}</span>}{item.locked && <span>{t('usersAdmin.locked')}</span>}{item.username === currentUser && <span>{t('usersAdmin.self')}</span>}{item.locked && <span className="ml-2 text-slate-500">{t('usersAdmin.serverConfigured')}</span>}</td>
                       <td className="px-2 py-3">{item.source === 'db' && !locked && (confirming === item.username ? <span className="flex flex-wrap items-center gap-2"><span className="text-slate-400">{t('usersAdmin.removeConfirm')}</span><button type="button" className={primaryButtonClass} disabled={saving === item.username} onClick={() => void removeRole(item.username)}>{t('usersAdmin.confirm')}</button><button type="button" className={buttonClass} onClick={() => setConfirming(null)}>{t('usersAdmin.cancel')}</button></span> : <button type="button" className={buttonClass} disabled={saving === item.username} onClick={() => setConfirming(item.username)}>{t('usersAdmin.remove')}</button>)}</td>
@@ -139,7 +140,7 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
           <p className="mt-1 text-xs leading-5 text-slate-500">{t('usersAdmin.addHint')}</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,180px)_auto] sm:items-end">
             <label className="text-xs text-slate-400">{t('usersAdmin.candidate')}<span className="mt-1 block"><SelectMenu value={candidate} options={candidates.map((value) => ({ value, label: value }))} ariaLabel={t('usersAdmin.candidate')} onChange={(value) => setCandidate(String(value))} /></span></label>
-            <label className="text-xs text-slate-400">{t('usersAdmin.role')}<span className="mt-1 block"><SelectMenu value={newRole} options={roles} ariaLabel={t('usersAdmin.role')} onChange={(value) => setNewRole(value as UserRole)} /></span></label>
+            <label className="text-xs text-slate-400">{t('usersAdmin.role')}<span className="mt-1 block"><span role="group" aria-label={t('usersAdmin.role')}><ChoiceChips size="sm" options={roles} value={newRole} onChange={(value) => setNewRole(value as UserRole)} /></span></span></label>
             <button type="button" className={primaryButtonClass} disabled={!candidate || Boolean(saving)} onClick={() => void addAssignment()}>{t('usersAdmin.add')}</button>
           </div>
           <p className="mt-3 text-xs leading-5 text-slate-500">{t('usersAdmin.linuxHint')}</p>

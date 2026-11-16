@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -30,14 +30,14 @@ describe('UsersAdmin', () => {
     render(<UsersAdmin currentUser="current" />);
     expect(await screen.findByText('env-user')).toBeTruthy();
     expect(screen.getByText('db-user')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'usersAdmin.role env-user' }) as HTMLButtonElement).disabled).toBe(true);
+    const lockedGroup = screen.getByRole('group', { name: 'usersAdmin.role env-user' });
+    for (const chip of within(lockedGroup).getAllByRole('button')) expect((chip as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('updates a database role and reloads the list', async () => {
     render(<UsersAdmin />);
-    const roleButton = await screen.findByRole('button', { name: 'usersAdmin.role db-user' });
-    fireEvent.click(roleButton);
-    fireEvent.click(screen.getByRole('button', { name: 'usersAdmin.roles.operator' }));
+    const group = await screen.findByRole('group', { name: 'usersAdmin.role db-user' });
+    fireEvent.click(within(group).getByRole('button', { name: 'usersAdmin.roles.operator' }));
     await waitFor(() => expect(mocks.updateUserRole).toHaveBeenCalledWith('db-user', 'operator'));
     await waitFor(() => expect(mocks.listUsers).toHaveBeenCalledTimes(2));
   });
@@ -45,8 +45,8 @@ describe('UsersAdmin', () => {
   it('shows the server error for a conflict', async () => {
     mocks.updateUserRole.mockRejectedValue({ response: { status: 409, data: { detail: 'locked by configuration' } } });
     render(<UsersAdmin />);
-    fireEvent.click(await screen.findByRole('button', { name: 'usersAdmin.role db-user' }));
-    fireEvent.click(screen.getByRole('button', { name: 'usersAdmin.roles.operator' }));
+    const group = await screen.findByRole('group', { name: 'usersAdmin.role db-user' });
+    fireEvent.click(within(group).getByRole('button', { name: 'usersAdmin.roles.operator' }));
     expect((await screen.findByRole('alert')).textContent).toContain('locked by configuration');
   });
 });

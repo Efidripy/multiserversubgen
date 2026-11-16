@@ -148,7 +148,6 @@ auth_service = AuthService(
     mfa_totp_users=MFA_TOTP_USERS,
     role_lookup=panel_roles.get_role,
 )
-panel_roles.set_on_change(auth_service.invalidate_role_cache)
 
 _docs_enabled = os.getenv("ENABLE_API_DOCS", "").strip().lower() in {"1", "true", "yes", "on"}
 app = FastAPI(
@@ -422,6 +421,15 @@ def _sync_auth_service_roles() -> None:
 def get_user_role(username: str) -> str:
     _sync_auth_service_roles()
     return _facade_get_user_role(username)
+
+
+def _on_panel_role_change() -> None:
+    auth_service.invalidate_role_cache()
+    # Existing sockets keep the role they connected with; drop those whose role changed.
+    ws_manager.close_sockets_with_changed_role(get_user_role)
+
+
+panel_roles.set_on_change(_on_panel_role_change)
 
 
 def has_min_role(user_role: str, min_role: str) -> bool:
