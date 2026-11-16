@@ -357,9 +357,9 @@ def build_operations_router(
                                 raw = b""
                             else:
                                 total += len(raw)
-                        except Exception as exc:
+                        except Exception:
                             if not as_json:
-                                backup = {"node": backup.get("node"), "error": f"decode error: {exc}"}
+                                backup = {"node": backup.get("node"), "error": "decode error"}
                     if as_json:
                         backups.append(backup)
                     elif backup.get("error"):

@@ -17,7 +17,7 @@ _BLOCKED_HOSTNAMES = {
     "metadata.google.internal",
     "metadata",
 }
-_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")  # prod-data-ok: CGNAT range literal, not a host
 
 MAX_LOG_COUNT = 500
 MAX_BACKUP_BYTES = 8 * 1024 * 1024
