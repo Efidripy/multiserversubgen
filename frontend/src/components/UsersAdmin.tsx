@@ -25,6 +25,7 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
   const { t } = useTranslation();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [candidates, setCandidates] = useState<string[]>([]);
+  const [me, setMe] = useState<{ username: string; owner: boolean }>({ username: '', owner: false });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState('');
@@ -40,6 +41,7 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
       const payload = await listUsers();
       setUsers(payload.users);
       setCandidates(payload.candidates);
+      setMe(payload.me || { username: '', owner: false });
       setCandidate((previous) => previous && payload.candidates.includes(previous) ? previous : (payload.candidates[0] || ''));
       return true;
     } catch (err: any) {
@@ -120,13 +122,16 @@ export const UsersAdmin: React.FC<UsersAdminProps> = ({ currentUser = '' }) => {
                 </tr></thead>
                 <tbody>
                   {users.map((item) => {
-                    const locked = item.locked || item.username === currentUser;
+                    const isSelf = item.username === me.username || item.username === currentUser;
+                    const locked = item.owner || isSelf;
+                    const removeLabel = item.env_role ? t('usersAdmin.restore') : t('usersAdmin.remove');
+                    const removeConfirmation = item.env_role ? t('usersAdmin.restoreConfirm') : t('usersAdmin.removeConfirm');
                     return <tr key={item.username} className="border-b border-cyan-500/10 last:border-0">
                       <td className="px-2 py-3 font-mono text-slate-200">{item.username}</td>
                       <td className="px-2 py-3"><div role="group" aria-label={`${t('usersAdmin.role')} ${item.username}`}><ChoiceChips size="sm" options={roles} value={item.role} disabled={locked || saving === item.username} onChange={(value) => void changeRole(item.username, value as UserRole)} /></div></td>
                       <td className="px-2 py-3 text-slate-400">{t(`usersAdmin.sources.${item.source}`)}</td>
-                      <td className="px-2 py-3 text-slate-400"><div className="flex flex-wrap items-center gap-x-3 gap-y-1">{item.owner && <span className="text-cyan-200">{t('usersAdmin.owner')}</span>}{item.username === currentUser && <span className="text-cyan-200">{t('usersAdmin.self')}</span>}{item.locked && <span className="text-slate-500">{t('usersAdmin.serverConfigured')}</span>}</div></td>
-                      <td className="px-2 py-3">{item.source === 'db' && !locked && (confirming === item.username ? <span className="flex flex-wrap items-center gap-2"><span className="text-slate-400">{t('usersAdmin.removeConfirm')}</span><button type="button" className={primaryButtonClass} disabled={saving === item.username} onClick={() => void removeRole(item.username)}>{t('usersAdmin.confirm')}</button><button type="button" className={buttonClass} onClick={() => setConfirming(null)}>{t('usersAdmin.cancel')}</button></span> : <button type="button" className={buttonClass} disabled={saving === item.username} onClick={() => setConfirming(item.username)}>{t('usersAdmin.remove')}</button>)}</td>
+                      <td className="px-2 py-3 text-slate-400"><div className="flex flex-wrap items-center gap-x-3 gap-y-1">{item.owner && <span className="text-cyan-200">{t('usersAdmin.owner')}</span>}{item.owner && <span className="text-slate-500">{t('usersAdmin.ownerConfigOnly')}</span>}{isSelf && <span className="text-cyan-200">{t('usersAdmin.self')}</span>}{item.source === 'env' && item.env_role && <span className="text-slate-500">{t('usersAdmin.fromConfiguration')}: {t(`usersAdmin.roles.${item.env_role}`)}</span>}{item.source === 'db' && item.env_role && <span className="text-slate-500">{t('usersAdmin.changedInPanel')} ({t('usersAdmin.fromConfiguration')}: {t(`usersAdmin.roles.${item.env_role}`)})</span>}</div></td>
+                      <td className="px-2 py-3">{item.source === 'db' && !locked && (confirming === item.username ? <span className="flex flex-wrap items-center gap-2"><span className="text-slate-400">{removeConfirmation}</span><button type="button" className={primaryButtonClass} disabled={saving === item.username} onClick={() => void removeRole(item.username)}>{t('usersAdmin.confirm')}</button><button type="button" className={buttonClass} onClick={() => setConfirming(null)}>{t('usersAdmin.cancel')}</button></span> : <button type="button" className={buttonClass} disabled={saving === item.username} onClick={() => setConfirming(item.username)}>{removeLabel}</button>)}</td>
                     </tr>;
                   })}
                 </tbody>
