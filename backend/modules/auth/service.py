@@ -11,7 +11,9 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets
+import socket
 import time
 from threading import Lock
 from typing import Dict, Optional, Set, Tuple
@@ -72,6 +74,8 @@ class AuthService:
         self.role_operators: Set[str] = role_operators or set()
         self.role_admins: Set[str] = role_admins or set()
         self.ws_auth_secret = ws_auth_secret or secrets.token_urlsafe(32)
+        self._used_ws_tickets: Dict[str, int] = {}
+        self._ws_ticket_lock = Lock()
         self.mfa_totp_enabled = mfa_totp_enabled
         self.mfa_totp_users: Dict[str, str] = mfa_totp_users or {}
 
@@ -121,13 +125,30 @@ class AuthService:
                 if time.time() < expire_ts:
                     return cached_result == "ok"
 
-        try:
-            import pam as _pam  # type: ignore[import-untyped]
-            p = _pam.pam()
-            ok = p.authenticate(username, password)
-        except Exception as exc:
-            logger.warning("AuthService.authenticate PAM error: %s", exc)
-            ok = False
+        helper_socket = os.getenv("PAM_HELPER_SOCKET", "")
+        if helper_socket:
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+                    conn.settimeout(5.0)
+                    conn.connect(helper_socket)
+                    request = json.dumps(
+                        {"user": username, "password": password}, separators=(",", ":")
+                    ).encode("utf-8") + b"\n"
+                    conn.sendall(request)
+                    response = conn.recv(64)
+                parsed = json.loads(response.decode("utf-8"))
+                ok = parsed.get("ok") is True if isinstance(parsed, dict) else False
+            except Exception as exc:
+                logger.warning("AuthService.authenticate PAM helper unavailable: %s", exc)
+                ok = False
+        else:
+            try:
+                import pam as _pam  # type: ignore[import-untyped]
+                p = _pam.pam()
+                ok = p.authenticate(username, password)
+            except Exception as exc:
+                logger.warning("AuthService.authenticate PAM error: %s", exc)
+                ok = False
 
         ttl = AUTH_CACHE_TTL_SEC if ok else AUTH_CACHE_NEGATIVE_TTL_SEC
         with _auth_cache_lock:
@@ -157,6 +178,11 @@ class AuthService:
             now = int(time.time())
             if expires_at < now or not username or not nonce:
                 return None
+            with self._ws_ticket_lock:
+                self._used_ws_tickets = {key: exp for key, exp in self._used_ws_tickets.items() if exp >= now}
+                if signature in self._used_ws_tickets:
+                    return None
+                self._used_ws_tickets[signature] = expires_at
             return username
         except (ValueError, TypeError, UnicodeError):
             return None

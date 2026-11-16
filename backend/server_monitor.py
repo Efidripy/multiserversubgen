@@ -105,7 +105,6 @@ def _requests_verify_value():
     return get_requests_verify_value(verify_tls=VERIFY_TLS, ca_bundle_path=CA_BUNDLE_PATH)
 
 
-# shortcut: the cap is per node; /backup/all still holds every node's copy in memory, stream it if fleets grow.
 MAX_NODE_BACKUP_BYTES = int(os.getenv("MAX_NODE_BACKUP_BYTES", str(256 * 1024 * 1024)))
 
 

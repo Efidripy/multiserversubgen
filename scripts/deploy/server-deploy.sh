@@ -7,6 +7,7 @@ REPO_DIR="${REPO_DIR:-$(pwd)}"
 ROLLBACK_ON_FAIL="${ROLLBACK_ON_FAIL:-1}"
 PROJECT_NAME="${PROJECT_NAME:-sub-manager}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/${PROJECT_NAME}}"
+source "${REPO_DIR:-$(pwd)}/scripts/installer/lib/pam_helper.sh" 2>/dev/null || true
 APP_PORT="${APP_PORT:-666}"
 # A caller may deliberately override these for a controlled path migration.
 # In the normal update path they are recovered from the currently effective
@@ -26,6 +27,9 @@ PROMTAIL_CONFIG_ROLLBACK=""
 PROMTAIL_CONFIG_WAS_PRESENT=0
 RUNTIME_SERVICE_USER=""
 RUNTIME_SERVICE_GROUP=""
+PAM_DROPIN_DIR="/etc/systemd/system/${PROJECT_NAME}.service.d"
+PAM_DROPIN_ROLLBACK=""
+PAM_DROPIN_WAS_PRESENT=0
 
 fail() {
   printf 'Deploy refused: %s\n' "$*" >&2
@@ -184,6 +188,18 @@ restore_service_unit() {
   systemctl daemon-reload || true
 }
 
+restore_pam_dropins() {
+  rm -rf -- "$PAM_DROPIN_DIR"
+  if [[ "$PAM_DROPIN_WAS_PRESENT" != "1" ]]; then
+    systemctl daemon-reload || true
+    return 0
+  fi
+  [[ -n "$PAM_DROPIN_ROLLBACK" && -d "$PAM_DROPIN_ROLLBACK" ]] || return 0
+  install -d -m 0755 "$(dirname -- "$PAM_DROPIN_DIR")"
+  cp -a -- "$PAM_DROPIN_ROLLBACK" "$PAM_DROPIN_DIR"
+  systemctl daemon-reload || true
+}
+
 render_runtime_service_unit() {
   local template="$1"
   local current="$2"
@@ -267,6 +283,7 @@ restore_previous() {
   [[ "$SWAP_STARTED" == "1" ]] || return 0
   systemctl stop "$PROJECT_NAME" || true
   restore_service_unit
+  restore_pam_dropins
   if [[ "$HAD_PREVIOUS" == "1" && -d "$QUARANTINE_DIR" ]]; then
     printf 'Deploy failed; restoring previous release.\n' >&2
     [[ -d "$PROJECT_DIR" ]] && rm -rf -- "$PROJECT_DIR"
@@ -359,6 +376,11 @@ if [[ -f "$SERVICE_UNIT" ]]; then
   install -o root -g root -m 0600 "$SERVICE_UNIT" "$SERVICE_UNIT_ROLLBACK"
   SERVICE_UNIT_WAS_PRESENT=1
 fi
+if [[ -d "$PAM_DROPIN_DIR" ]]; then
+  PAM_DROPIN_WAS_PRESENT=1
+  PAM_DROPIN_ROLLBACK="${BACKUP_ROOT}/${PROJECT_NAME}-pam-dropins-${STAMP}"
+  cp -a -- "$PAM_DROPIN_DIR" "$PAM_DROPIN_ROLLBACK"
+fi
 STAGED_SERVICE_UNIT="${BACKUP_ROOT}/${PROJECT_NAME}-service-unit-${STAMP}.next.service"
 [[ ! -e "$STAGED_SERVICE_UNIT" ]] || fail "service unit staging path already exists: $STAGED_SERVICE_UNIT"
 render_runtime_service_unit "$SERVICE_TEMPLATE" "$SERVICE_UNIT" "$STAGED_SERVICE_UNIT"
@@ -420,6 +442,7 @@ validate_runtime_readability_as_service_user
 install -o root -g root -m 0644 "$STAGED_SERVICE_UNIT" "$SERVICE_UNIT"
 rm -f -- "$STAGED_SERVICE_UNIT"
 STAGED_SERVICE_UNIT=""
+pam_helper_install "$PROJECT_NAME" "$REPO_DIR"
 systemctl daemon-reload
 systemctl restart "$PROJECT_NAME"
 SERVICE_STOPPED=0

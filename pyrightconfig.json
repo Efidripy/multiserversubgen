@@ -1,0 +1,7 @@
+{
+  "include": ["backend"],
+  "exclude": ["backend/tests", "**/__pycache__", "**/node_modules", "**/.venv"],
+  "extraPaths": ["backend"],
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux"
+}

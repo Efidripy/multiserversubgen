@@ -935,6 +935,12 @@ def test_happ_platform_routing(env, platform, device_os, ua):
     assert all(happ["settings"][f"routing_{name}"] for name in ("ios", "android", "windows"))
     url = f"/api/v1/sub/{env.email_token}"
     assert env.client.get(url, headers={"User-Agent": ua, "X-Device-OS": device_os}).headers["Routing"] == "happ://rule"
+    client["settings"][f"routing_{platform}_value"] = f"happ://{platform}"
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+    for headers in ({"User-Agent": ua, "X-Device-OS": device_os}, {"User-Agent": ua}):
+        response = env.client.get(url, headers=headers)
+        assert response.headers["Routing"] == f"happ://{platform}"
+        assert response.headers["Routing-Enable"] == "true"
     client["settings"][f"routing_{platform}"] = False
     assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
     for headers in ({"User-Agent": ua, "X-Device-OS": device_os.swapcase()}, {"User-Agent": ua}):
@@ -948,11 +954,11 @@ def test_happ_platform_routing(env, platform, device_os, ua):
 
 
 def test_happ_platform_routing_on_group_cache_hit(env):
-    configure(env, "happ", settings={"routing": "happ://rule", "routing_enable": True, "routing_ios": False})
+    configure(env, "happ", settings={"routing": "happ://rule", "routing_enable": True, "routing_ios": False, "routing_android_value": "happ://android"})
     url = f"/api/v1/sub-grouped/{env.group_token}"
     android = env.client.get(url, headers={"User-Agent": "Happ/1", "X-Device-OS": "Android"})
     ios = env.client.get(url, headers={"User-Agent": "Happ/1", "X-Device-OS": "iOS"})
-    assert android.headers["Routing"] == "happ://rule"
+    assert android.headers["Routing"] == "happ://android"
     assert ios.headers["X-Subscription-Cache"] == "hit"
     assert "Routing" not in ios.headers
     assert "Routing-Enable" not in ios.headers

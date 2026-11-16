@@ -17,6 +17,7 @@ _BLOCKED_HOSTNAMES = {
     "metadata.google.internal",
     "metadata",
 }
+_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")  # prod-data-ok: CGNAT range literal, not a host
 
 MAX_LOG_COUNT = 500
 MAX_BACKUP_BYTES = 8 * 1024 * 1024
@@ -30,6 +31,10 @@ _SUBSCRIPTION_PATH = re.compile(r"^(?P<prefix>/api/v1/(?:sub|guest-sub|sub-group
 
 
 def _is_forbidden_address(address: ipaddress._BaseAddress, *, allow_private: bool) -> bool:
+    mapped = address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) else None
+    comparable = mapped if mapped is not None else address if address.version == 4 else None
+    if comparable is not None and comparable in _SHARED_ADDRESS_SPACE:
+        return not allow_private
     return bool(
         address.is_loopback
         or address.is_link_local

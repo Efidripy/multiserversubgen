@@ -1,6 +1,7 @@
-"""Lifecycle regressions for the authenticated WebSocket endpoint."""
+﻿"""Lifecycle regressions for the authenticated WebSocket endpoint."""
 
 import asyncio
+import json
 import os
 import sys
 
@@ -24,11 +25,11 @@ class _FakeWebSocket:
     async def close(self, *, code):
         self.close_codes.append(code)
 
-    async def receive_json(self):
+    async def receive_text(self):
         message = next(self._messages)
         if isinstance(message, BaseException):
             raise message
-        return message
+        return json.dumps(message, ensure_ascii=False)
 
 
 class _FakeConnectionManager:
@@ -120,3 +121,95 @@ def test_handler_error_after_connect_removes_socket_once():
 
     assert websocket.close_codes == []
     _assert_disconnected_once(manager, websocket)
+
+
+def test_ticket_is_single_use_even_in_concurrent_verification():
+    from concurrent.futures import ThreadPoolExecutor
+    from modules.auth.service import AuthService
+
+    service = AuthService(ws_auth_secret="test")
+    ticket = service.issue_ws_ticket("user")
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(service.verify_ws_ticket, [ticket] * 16))
+    assert results.count("user") == 1
+    assert results.count(None) == 15
+
+
+def test_oversized_utf8_message_closes_socket(monkeypatch):
+    monkeypatch.setenv("WS_MAX_MESSAGE_BYTES", "10")
+    manager = _FakeConnectionManager()
+    websocket = _FakeWebSocket([{"text": "Ã©" * 10}])
+    asyncio.run(_websocket_endpoint(manager, lambda *_args: None)(websocket))
+    assert websocket.close_codes == [1009]
+    _assert_disconnected_once(manager, websocket)
+
+
+def test_ticket_is_single_use():
+    from modules.auth.service import AuthService
+    service = AuthService(ws_auth_secret="test")
+    ticket = service.issue_ws_ticket("user")
+    assert service.verify_ws_ticket(ticket) == "user"
+    assert service.verify_ws_ticket(ticket) is None
+
+
+def test_per_user_connection_limit_and_release(monkeypatch):
+    monkeypatch.setenv("WS_MAX_CONNECTIONS_PER_USER", "1")
+    monkeypatch.setenv("WS_MAX_CONNECTIONS_TOTAL", "20")
+
+    async def run():
+        manager = _FakeConnectionManager()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        class WaitingSocket(_FakeWebSocket):
+            async def receive_text(self):
+                entered.set()
+                await release.wait()
+                raise WebSocketDisconnect()
+
+        endpoint = _websocket_endpoint(manager, lambda *_args: None)
+        first = WaitingSocket([])
+        first_task = asyncio.create_task(endpoint(first))
+        await entered.wait()
+        rejected = WaitingSocket([])
+        await endpoint(rejected)
+        assert rejected.close_codes == [1013]
+        release.set()
+        await first_task
+        replacement = WaitingSocket([])
+        replacement_task = asyncio.create_task(endpoint(replacement))
+        await asyncio.sleep(0)
+        release.set()
+        await replacement_task
+        assert replacement.close_codes == []
+
+    asyncio.run(run())
+
+
+def test_total_connection_limit(monkeypatch):
+    monkeypatch.setenv("WS_MAX_CONNECTIONS_PER_USER", "20")
+    monkeypatch.setenv("WS_MAX_CONNECTIONS_TOTAL", "1")
+
+    async def run():
+        manager = _FakeConnectionManager()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        class WaitingSocket(_FakeWebSocket):
+            async def receive_text(self):
+                entered.set()
+                await release.wait()
+                raise WebSocketDisconnect()
+
+        endpoint = _websocket_endpoint(manager, lambda *_args: None)
+        first = WaitingSocket([])
+        first_task = asyncio.create_task(endpoint(first))
+        await entered.wait()
+        other = WaitingSocket([])
+        other.headers["sec-websocket-protocol"] = "mssg-ticket.ticket"
+        await endpoint(other)
+        assert other.close_codes == [1013]
+        release.set()
+        await first_task
+
+    asyncio.run(run())

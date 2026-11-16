@@ -2141,6 +2141,8 @@ class TelegramRegistrationService:
                     + datetime.fromtimestamp(item.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
                 )
                 prefix = "👋"
+            else:
+                continue
             lines.append(f"{prefix} {item.label} — {details}")
             if item.kind == "primary":
                 buttons.append([{

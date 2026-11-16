@@ -9,6 +9,7 @@ source "${REPO_ROOT}/scripts/ops/lib/install_log.sh"
 # shellcheck source=lib/runtime_secrets.sh
 source "${SCRIPT_DIR}/lib/runtime_secrets.sh"
 source "${SCRIPT_DIR}/lib/component_ownership.sh"
+source "${SCRIPT_DIR}/lib/pam_helper.sh"
 LOG_FILE="/opt/.sub_manager_install.log"
 
 REMOVE_MODE="${REMOVE_MODE:-keep-db}"
@@ -156,6 +157,7 @@ main() {
     confirm_or_die
 
     require_project_service_inactive
+    pam_helper_remove "$PROJECT_NAME"
     systemctl disable "$PROJECT_NAME" >/dev/null 2>&1 || true
     rm -f "/etc/systemd/system/${PROJECT_NAME}.service"
     rm -f "/etc/${PROJECT_NAME}/runtime-secrets.env"

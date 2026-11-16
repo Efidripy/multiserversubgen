@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { verifyCurrentAuth } from '../src/api/authService';
 import { clearAuthCredentials, setAuthCredentials } from '../src/auth';
 import { WebSocketManager } from '../src/services/webSocketManager';
+
+vi.mock('../src/api/authService', () => ({
+  verifyCurrentAuth: vi.fn(async () => ({ ws_ticket: 'fresh-ticket' })),
+}));
 
 class MockWebSocket {
   static readonly OPEN = 1;
@@ -65,6 +70,8 @@ describe('WebSocket reconnect subscriptions', () => {
     first.close(1006);
     await vi.advanceTimersByTimeAsync(1000);
     const second = MockWebSocket.instances[1];
+    // The first ticket was single-use, so the reconnect must have fetched a new one.
+    expect(verifyCurrentAuth).toHaveBeenCalledTimes(1);
     second.open();
 
     expect(second.sent.map((message) => JSON.parse(message))).toEqual([

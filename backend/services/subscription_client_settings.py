@@ -40,6 +40,7 @@ FIELD_SPECS = {
     "happ": [
         ("routing_enable", "Routing-Enable", "bool", "routing", None), ("routing", "Routing", "text", "routing", None), ("routing_url", None, "url", "routing", None),
         ("routing_ios", None, "bool", "routing", None), ("routing_android", None, "bool", "routing", None), ("routing_windows", None, "bool", "routing", None),
+        *((f"routing_{platform}_value", None, "text", "routing", None) for platform in ("ios", "android", "windows")),
         ("no_limit", "No-Limit-Enabled", "bool", "routing", None), ("hide_settings", "Hide-Settings", "bool", "routing", None),
         ("color_profile", "Color-Profile", "text", "appearance", None), ("sub_info_text", "Sub-Info-Text", "text", "appearance", None),
         ("sub_info_color", "Sub-Info-Color", "enum", "appearance", ["blue", "green", "red"]), ("sub_info_button_text", "Sub-Info-Button-Text", "text", "appearance", None),
@@ -310,7 +311,7 @@ def _validate_field(kind: str, key: str, value: Any, spec: tuple) -> Any:
         raise ValueError(key)
     if field_type == "enum" and options and value not in options and value != "":
         raise ValueError(key)
-    if key == "routing" and value and kind == "happ" and not value.startswith("happ://"):
+    if key in {"routing", "routing_ios_value", "routing_android_value", "routing_windows_value"} and value and kind == "happ" and not value.startswith("happ://"):
         raise ValueError(key)
     if key in {"banner_bg_color", "banner_button_color"} and value and not re.fullmatch(r"#[0-9a-fA-F]{3,8}", value):
         raise ValueError(key)
@@ -478,12 +479,34 @@ def _validate_client(item: Any, builtins: dict[str, dict[str, Any]]) -> dict[str
     return base
 
 
+def select_happ_routing(values: Dict[str, Any], platform_hint: str) -> Optional[str]:
+    platform = None
+    for pattern, name in ((r"\b(?:ios|ipados|iphone|ipad)\b", "ios"), (r"\bandroid\b", "android"), (r"\bwindows\b", "windows")):
+        if re.search(pattern, platform_hint, re.IGNORECASE):
+            platform = name
+            break
+    if platform and not values.get(f"routing_{platform}", True):
+        return None
+    return (values.get(f"routing_{platform}_value") if platform else None) or values.get("routing", "")
+
+
 def _headers_for_limit(settings: Dict[str, Any], client: Dict[str, Any]) -> Dict[str, str]:
     profile_only = {"profile": settings.get("profile", {})}
     _client, headers = build_headers(profile_only, None, fallback_title="", fallback_interval=1)
-    for name, value in _field_headers(client).items():
-        _put_header(headers, name, value)
-    return headers
+    variants = [client]
+    if client.get("kind") == "happ":
+        for platform in ("ios", "android", "windows"):
+            variant = copy.deepcopy(client)
+            variant["settings"][f"routing_{platform}"] = True
+            variant["settings"]["routing"] = select_happ_routing(variant["settings"], platform) or ""
+            variants.append(variant)
+    candidates = []
+    for variant in variants:
+        candidate = headers.copy()
+        for name, value in _field_headers(variant).items():
+            _put_header(candidate, name, value)
+        candidates.append(candidate)
+    return max(candidates, key=lambda item: sum(len(k.encode()) + len(v.encode()) for k, v in item.items()))
 
 
 def validate_settings(raw: Any) -> Dict[str, Any]:

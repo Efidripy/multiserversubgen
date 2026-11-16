@@ -21,6 +21,8 @@ export class WebSocketManager {
   private policyRefreshAttempted = false;
   private terminalPolicyFailure = false;
   private ticketRefreshPromise: Promise<boolean> | null = null;
+  // A ticket is single-use: after it is presented the next connect must fetch a new one.
+  private ticketConsumed = false;
   private connectPromise: Promise<void> | null = null;
   private handlers: Map<string, Set<WebSocketMessageHandler>> = new Map();
   private channelRefs: Map<string, number> = new Map();
@@ -45,6 +47,23 @@ export class WebSocketManager {
     }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return Promise.resolve();
     if (this.connectPromise) return this.connectPromise;
+    if (this.ticketConsumed && !getAuth().wsTicket) {
+      if (!this.ticketRefreshPromise) {
+        this.ticketRefreshPromise = verifyCurrentAuth()
+          .then((verified) => {
+            if (!verified.ws_ticket) return false;
+            setWsTicket(verified.ws_ticket);
+            return true;
+          })
+          .catch(() => false)
+          .finally(() => { this.ticketRefreshPromise = null; });
+      }
+      return this.ticketRefreshPromise.then((ok) => {
+        if (!ok) throw new Error('WebSocket ticket refresh failed.');
+        if (this.closedByOwner) throw new Error('WebSocket connection closed.');
+        return this.connect();
+      });
+    }
 
     this.connectPromise = new Promise((resolve, reject) => {
       let settled = false;
@@ -78,6 +97,8 @@ export class WebSocketManager {
         }
 
         this.ws = new WebSocket(this.url, ['mssg-ws', `mssg-ticket.${auth.wsTicket}`]);
+        setWsTicket('');
+        this.ticketConsumed = true;
 
         this.ws.onopen = () => {
           devLog('[WebSocket] Connected');
