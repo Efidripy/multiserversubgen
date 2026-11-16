@@ -1320,3 +1320,11 @@ def test_clients_search_with_auth(monkeypatch):
     assert "total" in data
     assert "limit" in data
     assert data["limit"] == 10
+
+
+def test_live_login_path_goes_through_auth_service(monkeypatch):
+    # Regression: main.p used python-pam directly and ignored PAM_HELPER_SOCKET.
+    calls = []
+    monkeypatch.setattr(main.auth_service, "authenticate", lambda u, pw: calls.append((u, pw)) or True)
+    assert main.p.authenticate("admin", "x") is True
+    assert calls == [("admin", "x")]

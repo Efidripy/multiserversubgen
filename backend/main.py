@@ -1,5 +1,4 @@
 from core import worker_health
-import pam
 import os
 import asyncio
 from functools import partial
@@ -172,15 +171,14 @@ subscription_remote_rules_refresher = RemoteRulesRefresher(
 )
 
 
-class _PamFallback:
+class _PamClient:
+    """Live login path: delegates to AuthService so PAM_HELPER_SOCKET is honoured."""
+
     def authenticate(self, username, password):
-        return False
+        return auth_service.authenticate(username, password)
 
 
-try:
-    p = pam.pam()
-except Exception:
-    p = _PamFallback()
+p = _PamClient()
 
 runtime_state = RuntimeState()
 subscription_rate_state = runtime_state.subscription_rate_state
