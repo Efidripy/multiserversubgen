@@ -12,9 +12,11 @@ import main
 def test_get_user_role_from_lists(monkeypatch):
     monkeypatch.setattr(main, "ROLE_OPERATORS", {"operator1"})
     monkeypatch.setattr(main, "ROLE_ADMINS", {"admin1"})
+    monkeypatch.setattr(main, "ROLE_OWNERS", {"owner1"})
 
     assert main.get_user_role("operator1") == "operator"
     assert main.get_user_role("admin1") == "admin"
+    assert main.get_user_role("owner1") == "admin"
     assert main.get_user_role("unknown") == "viewer"
 
 

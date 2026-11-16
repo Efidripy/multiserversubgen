@@ -59,6 +59,7 @@ class AuthService:
 
     Args:
         role_operators: Set of usernames that have the ``operator`` role.
+        role_owners: Set of usernames that always have effective ``admin`` role.
         mfa_totp_enabled: Whether TOTP MFA is globally enabled.
         mfa_totp_users: Mapping of ``username → TOTP_secret``.
     """
@@ -68,6 +69,7 @@ class AuthService:
         *,
         role_operators: Optional[Set[str]] = None,
         role_admins: Optional[Set[str]] = None,
+        role_owners: Optional[Set[str]] = None,
         ws_auth_secret: str = "",
         mfa_totp_enabled: bool = False,
         mfa_totp_users: Optional[Dict[str, str]] = None,
@@ -75,6 +77,7 @@ class AuthService:
     ) -> None:
         self.role_operators: Set[str] = role_operators or set()
         self.role_admins: Set[str] = role_admins or set()
+        self.role_owners: Set[str] = role_owners or set()
         self.ws_auth_secret = ws_auth_secret or secrets.token_urlsafe(32)
         self._used_ws_tickets: Dict[str, int] = {}
         self._ws_ticket_lock = Lock()
@@ -92,13 +95,14 @@ class AuthService:
     def get_user_role(self, username: str) -> str:
         """Return the role string for *username*.
 
-        Priority: explicit admin > operator > viewer. Unknown PAM users never
-        receive administrator privileges.
+        Owners always resolve to ``admin``. For other users an explicit
+        database role takes precedence over environment role sets.
         """
-        if username in self.role_admins:
+        if self.is_owner(username):
             return "admin"
-        if username in self.role_operators:
-            return "operator"
+        env_role = "admin" if username in self.role_admins else (
+            "operator" if username in self.role_operators else "viewer"
+        )
         if self.role_lookup is not None:
             with self._role_cache_lock:
                 cached = self._role_cache.get(username)
@@ -109,8 +113,8 @@ class AuthService:
                 role = self.role_lookup(username)
             except Exception:
                 logger.exception("Role lookup failed for %s", username)
-                role = None
-            resolved_role = role if role in ROLE_RANK else "viewer"
+                return env_role
+            resolved_role = role if role in ROLE_RANK else env_role
             with self._role_cache_lock:
                 # A change that landed mid-lookup bumped the generation: do not publish the stale role.
                 if generation == self._role_cache_generation:
@@ -119,7 +123,11 @@ class AuthService:
                         resolved_role,
                     )
             return resolved_role
-        return "viewer"
+        return env_role
+
+    def is_owner(self, username: str) -> bool:
+        """Return whether *username* is configured as a panel owner."""
+        return username in self.role_owners
 
     def invalidate_role_cache(self) -> None:
         with self._role_cache_lock:

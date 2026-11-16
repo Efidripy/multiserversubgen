@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 ROLE_ORDER = {"admin": 0, "operator": 1, "viewer": 2}
+RoleSet = Set[str] | Callable[[], Set[str]] | None
 
 
 class RoleBody(BaseModel):
@@ -34,13 +35,29 @@ def build_users_router(
     check_auth: Callable[[Request], Optional[str]],
     get_user_role: Callable[[str], str],
     panel_roles,
-    role_admins: Set[str],
-    role_operators: Set[str],
-    role_owners: Set[str],
+    role_admins: RoleSet,
+    role_operators: RoleSet,
+    role_owners: RoleSet,
     enqueue_audit_event: Callable[[Dict], None],
 ):
     router = APIRouter()
-    env_users = set(role_admins) | set(role_operators) | set(role_owners)
+    def current_roles(value: RoleSet) -> Set[str]:
+        resolved = value() if callable(value) else value
+        return set(resolved or ())
+
+    def current_role_sets() -> tuple[Set[str], Set[str], Set[str]]:
+        return (
+            current_roles(role_admins),
+            current_roles(role_operators),
+            current_roles(role_owners),
+        )
+
+    def env_role(username: str, admins: Set[str], operators: Set[str]) -> Optional[str]:
+        if username in admins:
+            return "admin"
+        if username in operators:
+            return "operator"
+        return None
 
     def actor_or_unauthorized(request: Request) -> str:
         actor = check_auth(request)
@@ -54,35 +71,52 @@ def build_users_router(
         if not USERNAME_RE.fullmatch(username):
             raise HTTPException(status_code=422, detail="Invalid username")
 
-    def env_record(username: str) -> Dict:
+    def env_record(username: str, admins: Set[str], operators: Set[str], owners: Set[str]) -> Dict:
+        configured_role = env_role(username, admins, operators)
         return {
             "username": username,
-            "role": get_user_role(username),
+            "role": "admin" if username in owners else get_user_role(username),
             "source": "env",
-            "owner": username in role_owners,
-            "locked": True,
+            "env_role": configured_role,
+            "owner": username in owners,
         }
 
     @router.get("/api/v1/users")
     def list_users(request: Request):
-        actor_or_unauthorized(request)
-        users = {username: env_record(username) for username in env_users}
+        actor = actor_or_unauthorized(request)
+        admins, operators, owners = current_role_sets()
+        env_users = admins | operators | owners
+        users = {username: env_record(username, admins, operators, owners) for username in env_users}
         for row in panel_roles.list_roles():
             username = row["username"]
-            if username not in users:
-                users[username] = {
-                    "username": username,
-                    "role": row["role"],
-                    "source": "db",
-                    "owner": False,
-                    "locked": False,
-                }
-        ordered = sorted(users.values(), key=lambda item: (ROLE_ORDER[item["role"]], item["username"]))
+            if username in owners:
+                continue
+            configured_role = env_role(username, admins, operators)
+            users[username] = {
+                "username": username,
+                "role": row["role"],
+                "source": "db",
+                "env_role": configured_role,
+                "owner": False,
+            }
+        for user in users.values():
+            user["locked"] = user["owner"] or user["username"] == actor
+        ordered = sorted(
+            users.values(),
+            key=lambda item: (
+                0 if item["owner"] else ROLE_ORDER[item["role"]] + 1,
+                item["username"],
+            ),
+        )
         candidates = []
         for entry in pwd.getpwall():
             if 1000 <= entry.pw_uid <= 59999 and entry.pw_name not in users and USERNAME_RE.fullmatch(entry.pw_name):
                 candidates.append(entry.pw_name)
-        return {"users": ordered, "candidates": sorted(set(candidates))}
+        return {
+            "users": ordered,
+            "candidates": sorted(set(candidates)),
+            "me": {"username": actor, "owner": actor in owners},
+        }
 
     @router.put("/api/v1/users/{username}/role")
     def set_user_role(username: str, body: RoleBody, request: Request):
@@ -90,7 +124,8 @@ def build_users_router(
         validate_username(username)
         if body.role not in ROLE_ORDER:
             raise HTTPException(status_code=422, detail="Invalid role")
-        if username in env_users or username == actor:
+        _, _, owners = current_role_sets()
+        if username in owners or username == actor:
             raise HTTPException(status_code=409, detail="User role is locked")
         try:
             pwd.getpwnam(username)
@@ -112,7 +147,8 @@ def build_users_router(
     def delete_user_role(username: str, request: Request):
         actor = actor_or_unauthorized(request)
         validate_username(username)
-        if username in env_users or username == actor:
+        _, _, owners = current_role_sets()
+        if username in owners or username == actor:
             raise HTTPException(status_code=409, detail="User role is locked")
         old_role = panel_roles.get_role(username)
         removed = panel_roles.delete_role(username)

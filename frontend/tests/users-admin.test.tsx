@@ -16,22 +16,56 @@ describe('UsersAdmin', () => {
   beforeEach(() => {
     mocks.listUsers.mockResolvedValue({
       users: [
-        { username: 'env-user', role: 'admin', source: 'env', owner: true, locked: true },
-        { username: 'db-user', role: 'viewer', source: 'db', owner: false, locked: false },
+        { username: 'owner-user', role: 'admin', source: 'env', env_role: 'admin', owner: true, locked: true },
+        { username: 'env-user', role: 'admin', source: 'env', env_role: 'admin', owner: false, locked: false },
+        { username: 'db-user', role: 'viewer', source: 'db', env_role: null, owner: false, locked: false },
       ],
       candidates: ['candidate'],
+      me: { username: 'current', owner: false },
     });
     mocks.updateUserRole.mockResolvedValue({ username: 'db-user', role: 'operator', source: 'db' });
     mocks.deleteUserRole.mockResolvedValue({ username: 'db-user', removed: true });
   });
   afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
-  it('renders users and disables locked assignments', async () => {
+  it('renders users and disables owner assignments', async () => {
     render(<UsersAdmin currentUser="current" />);
-    expect(await screen.findByText('env-user')).toBeTruthy();
+    expect(await screen.findByText('owner-user')).toBeTruthy();
     expect(screen.getByText('db-user')).toBeTruthy();
-    const lockedGroup = screen.getByRole('group', { name: 'usersAdmin.role env-user' });
+    const lockedGroup = screen.getByRole('group', { name: 'usersAdmin.role owner-user' });
     for (const chip of within(lockedGroup).getAllByRole('button')) expect((chip as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('allows editing an environment user and shows its source role', async () => {
+    render(<UsersAdmin />);
+    const group = await screen.findByRole('group', { name: 'usersAdmin.role env-user' });
+    expect(within(group).getByRole('button', { name: 'usersAdmin.roles.admin' })).toBeTruthy();
+    expect((within(group).getByRole('button', { name: 'usersAdmin.roles.operator' }) as HTMLButtonElement).disabled).toBe(false);
+    // Scope to this row: the owner row shows the same note.
+    expect(within(group.closest('tr') as HTMLElement).getByText('usersAdmin.fromConfiguration: usersAdmin.roles.admin')).toBeTruthy();
+  });
+
+  it('disables the current user even when the role comes from the database', async () => {
+    mocks.listUsers.mockResolvedValueOnce({
+      users: [{ username: 'current', role: 'admin', source: 'db', env_role: null, owner: false, locked: true }],
+      candidates: [],
+      me: { username: 'current', owner: false },
+    });
+    render(<UsersAdmin />);
+    const group = await screen.findByRole('group', { name: 'usersAdmin.role current' });
+    for (const chip of within(group).getAllByRole('button')) expect((chip as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('uses the restore action for a database override of an environment role', async () => {
+    mocks.listUsers.mockResolvedValueOnce({
+      users: [{ username: 'env-db-user', role: 'viewer', source: 'db', env_role: 'admin', owner: false, locked: false }],
+      candidates: [],
+      me: { username: 'current', owner: false },
+    });
+    render(<UsersAdmin />);
+    expect(await screen.findByRole('button', { name: 'usersAdmin.restore' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'usersAdmin.restore' }));
+    expect(await screen.findByText('usersAdmin.restoreConfirm')).toBeTruthy();
   });
 
   it('updates a database role and reloads the list', async () => {
