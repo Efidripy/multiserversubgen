@@ -143,6 +143,7 @@ panel_roles = PanelRoleStore(DB_PATH)
 auth_service = AuthService(
     role_operators=ROLE_OPERATORS,
     role_admins=ROLE_ADMINS,
+    role_owners=ROLE_OWNERS,
     ws_auth_secret=WS_AUTH_SECRET,
     mfa_totp_enabled=MFA_TOTP_ENABLED,
     mfa_totp_users=MFA_TOTP_USERS,
@@ -414,8 +415,16 @@ adguard_collector_loop = adguard_runtime.collector_loop
 
 
 def _sync_auth_service_roles() -> None:
+    changed = (
+        auth_service.role_operators != ROLE_OPERATORS
+        or auth_service.role_admins != ROLE_ADMINS
+        or auth_service.role_owners != ROLE_OWNERS
+    )
     auth_service.role_operators = ROLE_OPERATORS
     auth_service.role_admins = ROLE_ADMINS
+    auth_service.role_owners = ROLE_OWNERS
+    if changed:
+        auth_service.invalidate_role_cache()
 
 
 def get_user_role(username: str) -> str:
@@ -569,9 +578,9 @@ register_app_routers(
     telegram_token_provider=telegram_token_provider,
     is_owner=lambda username: username in ROLE_OWNERS,
     panel_roles=panel_roles,
-    role_admins=ROLE_ADMINS,
-    role_operators=ROLE_OPERATORS,
-    role_owners=ROLE_OWNERS,
+    role_admins=lambda: ROLE_ADMINS,
+    role_operators=lambda: ROLE_OPERATORS,
+    role_owners=lambda: ROLE_OWNERS,
     enqueue_audit_event=enqueue_audit_event,
 )
 

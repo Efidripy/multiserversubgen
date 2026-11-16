@@ -26,7 +26,7 @@ def _endpoint(router, path, method):
     return next(route.endpoint for route in router.routes if route.path == path and method in route.methods)
 
 
-def test_env_priority_and_role_changes_are_immediate(tmp_path):
+def test_db_priority_and_role_changes_are_immediate(tmp_path):
     db_path = os.fspath(tmp_path / "admin.db")
     init_db(db_path)
     store = PanelRoleStore(db_path)
@@ -38,9 +38,9 @@ def test_env_priority_and_role_changes_are_immediate(tmp_path):
     store.set_on_change(service.invalidate_role_cache)
 
     store.set_role("admin", "viewer", "admin")
-    assert service.get_user_role("admin") == "admin"
+    assert service.get_user_role("admin") == "viewer"
     store.set_role("operator", "admin", "admin")
-    assert service.get_user_role("operator") == "operator"
+    assert service.get_user_role("operator") == "admin"
     store.set_role("user", "operator", "admin")
     assert service.get_user_role("user") == "operator"
     store.set_role("user", "viewer", "admin")
@@ -125,6 +125,48 @@ def test_users_router_unknown_system_user_and_self_change(tmp_path, monkeypatch)
     assert own.value.status_code == 409
 
 
+def test_owner_and_env_users_follow_new_mutation_rules(tmp_path, monkeypatch):
+    db_path = os.fspath(tmp_path / "admin.db")
+    init_db(db_path)
+    store = PanelRoleStore(db_path)
+    admins = {"admin", "envadmin"}
+    operators = {"envoperator"}
+    owners = {"owner"}
+    service = AuthService(
+        role_admins=admins,
+        role_operators=operators,
+        role_owners=owners,
+        role_lookup=store.get_role,
+    )
+    store.set_on_change(service.invalidate_role_cache)
+    router = build_users_router(
+        check_auth=lambda _request: "admin",
+        get_user_role=service.get_user_role,
+        panel_roles=store,
+        role_admins=lambda: admins,
+        role_operators=lambda: operators,
+        role_owners=lambda: owners,
+        enqueue_audit_event=lambda _event: None,
+    )
+    monkeypatch.setattr("routers.users.pwd.getpwnam", lambda _name: SimpleNamespace())
+    request = SimpleNamespace()
+    put = _endpoint(router, "/api/v1/users/{username}/role", "PUT")
+    delete = _endpoint(router, "/api/v1/users/{username}/role", "DELETE")
+
+    for username in ("owner", "admin"):
+        with pytest.raises(HTTPException) as locked:
+            put(username, RoleBody(role="viewer"), request)
+        assert locked.value.status_code == 409
+    put("envadmin", RoleBody(role="viewer"), request)
+    put("envoperator", RoleBody(role="admin"), request)
+    assert service.get_user_role("envadmin") == "viewer"
+    assert service.get_user_role("envoperator") == "admin"
+    assert delete("envadmin", request) == {"username": "envadmin", "removed": True}
+    assert delete("envoperator", request) == {"username": "envoperator", "removed": True}
+    assert service.get_user_role("envadmin") == "admin"
+    assert service.get_user_role("envoperator") == "operator"
+
+
 def test_users_router_lists_env_and_db_users_with_candidates(tmp_path, monkeypatch):
     db_path = os.fspath(tmp_path / "admin.db")
     init_db(db_path)
@@ -151,9 +193,14 @@ def test_users_router_lists_env_and_db_users_with_candidates(tmp_path, monkeypat
     result = _endpoint(router, "/api/v1/users", "GET")(SimpleNamespace())
 
     assert result["candidates"] == ["alice"]
+    assert result["me"] == {"username": "root", "owner": True}
     assert [(u["username"], u["source"], u["owner"], u["locked"]) for u in result["users"]][0] == (
         "root", "env", True, True
     )
+    by_name = {u["username"]: u for u in result["users"]}
+    assert by_name["root"]["env_role"] == "admin"
+    assert by_name["op1"]["env_role"] is None
+    assert by_name["viewer1"]["env_role"] is None
     assert {u["username"] for u in result["users"]} == {"root", "viewer1", "op1"}
 
 
@@ -171,6 +218,17 @@ def test_stale_inflight_lookup_cannot_restore_revoked_role():
     assert service.get_user_role("alice") == "admin"  # the in-flight caller still sees what it read
     service.role_lookup = lambda _name: "viewer"
     assert service.get_user_role("alice") == "viewer"  # but the stale value was not cached
+
+
+def test_role_lookup_failure_falls_back_to_environment_role():
+    service = AuthService(
+        role_admins={"envadmin"},
+        role_operators={"envoperator"},
+        role_lookup=lambda _name: (_ for _ in ()).throw(RuntimeError("db unavailable")),
+    )
+    assert service.get_user_role("envadmin") == "admin"
+    assert service.get_user_role("envoperator") == "operator"
+    assert service.get_user_role("unknown") == "viewer"
 
 
 def test_candidates_skip_names_the_api_would_reject(tmp_path, monkeypatch):
