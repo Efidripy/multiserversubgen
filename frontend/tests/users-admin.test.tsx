@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   listUsers: vi.fn(),
   updateUserRole: vi.fn(),
   deleteUserRole: vi.fn(),
+  removeUser: vi.fn(),
+  updateUserNote: vi.fn(),
 }));
 
 vi.mock('../src/api/users', () => mocks);
@@ -16,9 +18,9 @@ describe('UsersAdmin', () => {
   beforeEach(() => {
     mocks.listUsers.mockResolvedValue({
       users: [
-        { username: 'owner-user', role: 'admin', source: 'env', env_role: 'admin', owner: true, locked: true },
-        { username: 'env-user', role: 'admin', source: 'env', env_role: 'admin', owner: false, locked: false },
-        { username: 'db-user', role: 'viewer', source: 'db', env_role: null, owner: false, locked: false },
+        { username: 'owner-user', role: 'admin', source: 'env', env_role: 'admin', owner: true, locked: true, note: '' },
+        { username: 'env-user', role: 'admin', source: 'env', env_role: 'admin', owner: false, locked: false, note: '' },
+        { username: 'db-user', role: 'viewer', source: 'db', env_role: null, owner: false, locked: false, note: '' },
       ],
       candidates: ['candidate'],
       me: { username: 'current', owner: false },
@@ -56,16 +58,25 @@ describe('UsersAdmin', () => {
     for (const chip of within(group).getAllByRole('button')) expect((chip as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('uses the restore action for a database override of an environment role', async () => {
-    mocks.listUsers.mockResolvedValueOnce({
-      users: [{ username: 'env-db-user', role: 'viewer', source: 'db', env_role: 'admin', owner: false, locked: false }],
-      candidates: [],
-      me: { username: 'current', owner: false },
-    });
+  it('deletes an environment user through the confirm step', async () => {
+    mocks.removeUser.mockResolvedValue({ username: 'env-user', removed: false, blocked: true });
     render(<UsersAdmin />);
-    expect(await screen.findByRole('button', { name: 'usersAdmin.restore' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'usersAdmin.restore' }));
-    expect(await screen.findByText('usersAdmin.restoreConfirm')).toBeTruthy();
+    const row = (await screen.findByText('env-user')).closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'usersAdmin.remove' }));
+    expect(await screen.findByText('usersAdmin.removeConfirm')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'usersAdmin.confirm' }));
+    await waitFor(() => expect(mocks.removeUser).toHaveBeenCalledWith('env-user'));
+  });
+
+  it('offers no delete for the owner and saves a note on blur', async () => {
+    mocks.updateUserNote.mockResolvedValue({ username: 'owner-user', note: 'boss' });
+    render(<UsersAdmin />);
+    const row = (await screen.findByText('owner-user')).closest('tr') as HTMLElement;
+    expect(within(row).queryByRole('button', { name: 'usersAdmin.remove' })).toBeNull();
+    const input = within(row).getByLabelText('usersAdmin.notes owner-user');
+    fireEvent.change(input, { target: { value: 'boss' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(mocks.updateUserNote).toHaveBeenCalledWith('owner-user', 'boss'));
   });
 
   it('updates a database role and reloads the list', async () => {

@@ -148,6 +148,7 @@ auth_service = AuthService(
     mfa_totp_enabled=MFA_TOTP_ENABLED,
     mfa_totp_users=MFA_TOTP_USERS,
     role_lookup=panel_roles.get_role,
+    blocked_lookup=panel_roles.is_blocked,
 )
 
 _docs_enabled = os.getenv("ENABLE_API_DOCS", "").strip().lower() in {"1", "true", "yes", "on"}

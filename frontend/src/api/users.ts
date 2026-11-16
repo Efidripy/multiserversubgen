@@ -11,6 +11,7 @@ export interface ManagedUser {
   env_role: UserRole | null;
   owner: boolean;
   locked: boolean;
+  note: string;
 }
 
 export interface CurrentUser {
@@ -52,5 +53,15 @@ export async function updateUserRole(username: string, role: UserRole): Promise<
 
 export async function deleteUserRole(username: string): Promise<{ username: string; removed: boolean }> {
   const response = await api.delete<{ username: string; removed: boolean }>(`/v1/users/${encodeURIComponent(username)}/role`, { auth: getAuth() });
+  return response.data;
+}
+
+export async function removeUser(username: string): Promise<{ username: string; removed: boolean; blocked: boolean }> {
+  const response = await api.delete<{ username: string; removed: boolean; blocked: boolean }>(`/v1/users/${encodeURIComponent(username)}`, { auth: getAuth() });
+  return response.data;
+}
+
+export async function updateUserNote(username: string, note: string): Promise<{ username: string; note: string }> {
+  const response = await api.put<{ username: string; note: string }>(`/v1/users/${encodeURIComponent(username)}/note`, { note }, { auth: getAuth() });
   return response.data;
 }

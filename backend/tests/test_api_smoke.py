@@ -1340,3 +1340,46 @@ def test_users_endpoint_works_through_real_app_wiring(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert {"users", "candidates", "me"} <= set(payload)
+
+
+def test_removed_user_is_blocked_and_note_roundtrip(monkeypatch):
+    from types import SimpleNamespace
+
+    import routers.users as users_router
+
+    monkeypatch.setattr(main, "ROLE_ADMINS", {"admin", "victim"})
+    monkeypatch.setattr(main.p, "authenticate", lambda u, p: p == "secret")
+    monkeypatch.setattr(
+        users_router,
+        "pwd",
+        SimpleNamespace(getpwnam=lambda name: object(), getpwall=lambda: [SimpleNamespace(pw_name="victim", pw_uid=1001)]),
+    )
+    client = TestClient(main.app)
+    admin, victim = _basic_auth("admin"), _basic_auth("victim")
+    try:
+        assert client.get("/api/v1/users", headers=victim).status_code == 200
+
+        note = client.put("/api/v1/users/victim/note", json={"note": "  Ivan  "}, headers=admin)
+        assert note.status_code == 200 and note.json()["note"] == "Ivan"
+        assert client.put("/api/v1/users/victim/note", json={"note": "x" * 201}, headers=admin).status_code == 422
+        listed = {u["username"]: u for u in client.get("/api/v1/users", headers=admin).json()["users"]}
+        assert listed["victim"]["note"] == "Ivan"
+
+        assert client.delete("/api/v1/users/admin", headers=admin).status_code == 409
+        assert client.delete("/api/v1/users/victim", headers=admin).status_code == 200
+        assert client.get("/api/v1/users", headers=victim).status_code == 403
+        assert client.put("/api/v1/users/victim/note", json={"note": "late"}, headers=admin).status_code == 409
+        payload = client.get("/api/v1/users", headers=admin).json()
+        assert "victim" not in {u["username"] for u in payload["users"]}
+        assert "victim" in payload["candidates"]
+
+        assert client.put("/api/v1/users/victim/role", json={"role": "viewer"}, headers=admin).status_code == 200
+        assert client.get("/api/v1/nodes", headers=victim).status_code != 403
+    finally:
+        main.panel_roles.delete_role("victim")
+        from services.db_bootstrap import connect
+
+        with connect(main.DB_PATH) as conn:
+            conn.execute("DELETE FROM panel_user_blocks")
+            conn.execute("DELETE FROM panel_user_notes")
+        main.auth_service.invalidate_role_cache()

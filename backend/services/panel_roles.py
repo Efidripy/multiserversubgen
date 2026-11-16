@@ -24,6 +24,11 @@ class PanelRoleStore:
             ).fetchone()
         return row[0] if row else None
 
+    def is_blocked(self, username: str) -> bool:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT 1 FROM panel_user_blocks WHERE username = ?", (username,)).fetchone()
+        return row is not None
+
     def list_roles(self) -> List[Dict[str, str]]:
         with connect(self.db_path) as conn:
             rows = conn.execute(
@@ -52,9 +57,44 @@ class PanelRoleStore:
                 "updated_by=excluded.updated_by, updated_at=CURRENT_TIMESTAMP",
                 (username, role, updated_by),
             )
+            conn.execute("DELETE FROM panel_user_blocks WHERE username = ?", (username,))
         if self._on_change is not None:
             self._on_change()
         return previous[0] if previous else None
+
+    def remove_user(self, username: str, blocked_by: str) -> bool:
+        with connect(self.db_path) as conn:
+            previous = conn.execute("SELECT 1 FROM panel_user_roles WHERE username = ?", (username,)).fetchone()
+            conn.execute("DELETE FROM panel_user_roles WHERE username = ?", (username,))
+            conn.execute(
+                "INSERT INTO panel_user_blocks(username, blocked_by, blocked_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+                "ON CONFLICT(username) DO UPDATE SET blocked_by=excluded.blocked_by, blocked_at=CURRENT_TIMESTAMP",
+                (username, blocked_by),
+            )
+            conn.execute("DELETE FROM panel_user_notes WHERE username = ?", (username,))
+        if self._on_change is not None:
+            self._on_change()
+        return previous is not None
+
+    def get_note(self, username: str) -> str:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT note FROM panel_user_notes WHERE username = ?", (username,)).fetchone()
+        return row[0] if row else ""
+
+    def set_note(self, username: str, note: str, updated_by: str) -> bool:
+        with connect(self.db_path) as conn:
+            # Refuse in the same transaction so a late save cannot resurrect a deleted user's note.
+            if conn.execute("SELECT 1 FROM panel_user_blocks WHERE username = ?", (username,)).fetchone():
+                return False
+            if note:
+                conn.execute(
+                    "INSERT INTO panel_user_notes(username, note, updated_by, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) "
+                    "ON CONFLICT(username) DO UPDATE SET note=excluded.note, updated_by=excluded.updated_by, updated_at=CURRENT_TIMESTAMP",
+                    (username, note, updated_by),
+                )
+            else:
+                conn.execute("DELETE FROM panel_user_notes WHERE username = ?", (username,))
+        return True
 
     def delete_role(self, username: str) -> bool:
         with connect(self.db_path) as conn:
@@ -100,3 +140,7 @@ def set_role(username: str, role: str, updated_by: str) -> Optional[str]:
 
 def delete_role(username: str) -> bool:
     return _store().delete_role(username)
+
+
+def is_blocked(username: str) -> bool:
+    return _store().is_blocked(username)
