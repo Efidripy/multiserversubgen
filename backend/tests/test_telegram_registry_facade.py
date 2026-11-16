@@ -50,6 +50,26 @@ EXPECTED_TRANSFERRED_SIGNATURES.update({
     'clear_service_notice_draft': "(self, admin_telegram_user_id: 'int') -> 'None'",
 })
 
+EXPECTED_TRANSFERRED_SIGNATURES.update({
+    'create_guest_subscription_link': "(self, *, telegram_user_id: 'int', duration_hours: 'int') -> 'TelegramGuestSubscriptionLink'",
+    'resolve_guest_subscription_link': "(self, token: 'str') -> 'TelegramGuestSubscriptionLink | None'",
+    'get_guest_subscription_link': "(self, *, telegram_user_id: 'int', guest_link_id: 'int') -> 'TelegramGuestSubscriptionLink'",
+    '_ensure_primary_logical_device': "(self, conn: 'sqlite3.Connection', customer_id: 'int') -> 'None'",
+    'list_logical_devices': "(self, telegram_user_id: 'int', *, include_inactive: 'bool' = True) -> 'tuple[TelegramLogicalDevice, ...]'",
+    'list_subscription_devices': "(self, telegram_user_id: 'int') -> 'tuple[TelegramSubscriptionDevice, ...]'",
+    'list_customer_subscription_links': "(self, customer_id: 'int') -> 'tuple[TelegramCustomerSubscriptionLink, ...]'",
+    'get_subscription_device': "(self, *, telegram_user_id: 'int', subscription_device_id: 'int') -> 'TelegramSubscriptionDevice'",
+    'create_subscription_device': "(self, *, telegram_user_id: 'int', label: 'str') -> 'TelegramSubscriptionDevice'",
+    'set_subscription_device_label': "(self, *, telegram_user_id: 'int', subscription_device_id: 'int', label: 'str') -> 'TelegramSubscriptionDevice'",
+    'revoke_subscription_device': "(self, *, telegram_user_id: 'int', subscription_device_id: 'int') -> 'None'",
+    'resolve_subscription_device_email': "(self, token_identifier: 'str') -> 'str | None'",
+    'set_logical_device_label': "(self, *, telegram_user_id: 'int', device_id: 'int', label: 'str') -> 'TelegramLogicalDevice'",
+    'revoke_guest_subscription_link': "(self, *, telegram_user_id: 'int', guest_link_id: 'int') -> 'None'",
+    'submit_quality_report': "(self, *, telegram_user_id: 'int', kind: 'str', platform: 'str') -> 'TelegramQualityReport'",
+    'list_customer_quality_reports': "(self, customer_id: 'int', *, limit: 'int' = 5) -> 'tuple[TelegramQualityReport, ...]'",
+    'list_subscription_token_events': "(self, customer_id: 'int', *, limit: 'int' = 5) -> 'tuple[TelegramSubscriptionTokenEvent, ...]'",
+})
+
 
 def test_telegram_registry_public_methods_are_stable():
     actual = [name for name in vars(TelegramRegistry) if not name.startswith("__")]
