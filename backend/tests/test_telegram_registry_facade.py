@@ -103,6 +103,17 @@ EXPECTED_TRANSFERRED_SIGNATURES.update({
     'list_subscription_token_events': "(self, customer_id: 'int', *, limit: 'int' = 5) -> 'tuple[TelegramSubscriptionTokenEvent, ...]'",
 })
 
+EXPECTED_TRANSFERRED_SIGNATURES.update({
+    'drift_inventory': "(self, *, node_ids: 'object' = None) -> 'dict[str, Any]'",
+    'sync_drift_binding_enabled': "(self, candidates: 'list[dict[str, Any]]') -> 'None'",
+    'record_drift_findings': "(self, *, scanned_node_ids: 'object', findings: 'object') -> 'tuple[DriftFinding, ...]'",
+    'auto_forget_drift_binding': "(self, finding_id: 'int', version: 'int') -> 'None'",
+    'list_drift_findings': "(self, *, status: 'str' = 'open', limit: 'int' = 100, offset: 'int' = 0) -> 'tuple[DriftFinding, ...]'",
+    'resolve_drift_finding': "(self, *, finding_id: 'int', expected_row_version: 'int', status: 'str', resolved_by: 'str') -> 'DriftFinding'",
+    '_insert_adopted_binding': "(conn, *, customer_id, node_id, remote_client_id, remote_sub_id, remote_email, remote_enabled)",
+    'adopt_drift_binding': "(self, *, finding_id: 'int', expected_row_version: 'int', remote_email: 'str', remote_client_id: 'str', remote_sub_id: 'str', remote_enabled: 'bool', adopted_by: 'str', automatic: 'bool' = False) -> 'DriftFinding | None'",
+})
+
 
 def test_telegram_registry_public_methods_are_stable():
     actual = [name for name in vars(TelegramRegistry) if not name.startswith("__")]
