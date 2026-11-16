@@ -19,6 +19,10 @@ from datetime import datetime, timedelta, timezone
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Iterable
 
+from services import telegram_registry_notices as _telegram_registry_notices
+from services import telegram_registry_support as _telegram_registry_support
+from services import telegram_registry_updates as _telegram_registry_updates
+from services import telegram_registry_traffic as _telegram_registry_traffic
 from services.db_bootstrap import connect
 from services.telegram_access import SUSPENDED_STATUSES
 
@@ -1400,16 +1404,7 @@ class TelegramRegistry:
     def eligible_provisioning_node_count(self) -> int:
         """Return the local policy snapshot count shown before final approval."""
 
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM telegram_node_policies AS p
-                JOIN nodes AS n ON n.id = p.node_id
-                WHERE p.provisioning_enabled = 1 AND n.enabled = 1 AND n.read_only = 0
-                """
-            ).fetchone()
-        return int(row[0]) if row else 0
+        return _telegram_registry_traffic.eligible_provisioning_node_count(self)
 
     def get_transport_preference(self) -> TelegramTransportPreference:
         with connect(self._db_path) as conn:
@@ -2361,150 +2356,50 @@ class TelegramRegistry:
             )
 
     def get_notification_preferences(self, telegram_user_id: int) -> TelegramNotificationPreferences:
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        with connect(self._db_path) as conn:
-            identity = conn.execute(
-                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
-            ).fetchone()
-            if identity is None:
-                raise TelegramRegistryError("Telegram identity was not found")
-            conn.execute(
-                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
-                (user_id,),
-            )
-            row = conn.execute(
-                """
-                SELECT background_notifications_enabled, expiry_reminders_enabled,
-                       traffic_reminders_enabled, traffic_reminder_thresholds, row_version
-                FROM telegram_notification_preferences WHERE telegram_user_id = ?
-                """,
-                (user_id,),
-            ).fetchone()
-        assert row is not None
-        return TelegramNotificationPreferences(
-            user_id,
-            bool(row[0]),
-            bool(row[1]),
-            bool(row[2]),
-            _normalize_traffic_thresholds(row[3]),
-            int(row[4]),
+        return _telegram_registry_traffic.get_notification_preferences(
+            self,
+            telegram_user_id,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            preference_type=TelegramNotificationPreferences,
+            normalize_traffic_thresholds=_normalize_traffic_thresholds,
         )
 
     def toggle_background_notifications(self, telegram_user_id: int) -> TelegramNotificationPreferences:
         """Toggle user-controlled background delivery after durable update dedupe."""
 
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        with connect(self._db_path) as conn:
-            identity = conn.execute(
-                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
-            ).fetchone()
-            if identity is None:
-                raise TelegramRegistryError("Telegram identity was not found")
-            conn.execute(
-                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
-                (user_id,),
-            )
-            conn.execute(
-                """
-                UPDATE telegram_notification_preferences
-                SET background_notifications_enabled = CASE background_notifications_enabled WHEN 1 THEN 0 ELSE 1 END,
-                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE telegram_user_id = ?
-                """,
-                (user_id,),
-            )
-        return self.get_notification_preferences(user_id)
+        return _telegram_registry_traffic.toggle_background_notifications(
+            self, telegram_user_id, positive_int=_positive_int, error_type=TelegramRegistryError
+        )
 
     def toggle_expiry_reminders(self, telegram_user_id: int) -> TelegramNotificationPreferences:
         """Toggle only pre-expiry reminders; command replies remain unaffected."""
 
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        with connect(self._db_path) as conn:
-            identity = conn.execute(
-                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
-            ).fetchone()
-            if identity is None:
-                raise TelegramRegistryError("Telegram identity was not found")
-            conn.execute(
-                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
-                (user_id,),
-            )
-            conn.execute(
-                """
-                UPDATE telegram_notification_preferences
-                SET expiry_reminders_enabled = CASE expiry_reminders_enabled WHEN 1 THEN 0 ELSE 1 END,
-                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE telegram_user_id = ?
-                """,
-                (user_id,),
-            )
-        return self.get_notification_preferences(user_id)
+        return _telegram_registry_traffic.toggle_expiry_reminders(
+            self, telegram_user_id, positive_int=_positive_int, error_type=TelegramRegistryError
+        )
 
     def toggle_traffic_reminders(self, telegram_user_id: int) -> TelegramNotificationPreferences:
         """Toggle opt-in finite-quota notices; command replies remain unaffected."""
 
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        with connect(self._db_path) as conn:
-            identity = conn.execute(
-                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
-            ).fetchone()
-            if identity is None:
-                raise TelegramRegistryError("Telegram identity was not found")
-            conn.execute(
-                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
-                (user_id,),
-            )
-            conn.execute(
-                """
-                UPDATE telegram_notification_preferences
-                SET traffic_reminders_enabled = CASE traffic_reminders_enabled WHEN 1 THEN 0 ELSE 1 END,
-                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE telegram_user_id = ?
-                """,
-                (user_id,),
-            )
-        return self.get_notification_preferences(user_id)
+        return _telegram_registry_traffic.toggle_traffic_reminders(
+            self, telegram_user_id, positive_int=_positive_int, error_type=TelegramRegistryError
+        )
 
     def toggle_traffic_reminder_threshold(
         self, telegram_user_id: int, threshold_percent: int
     ) -> TelegramNotificationPreferences:
         """Toggle one user-selected finite-traffic reminder threshold."""
 
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        if isinstance(threshold_percent, bool) or threshold_percent not in TRAFFIC_REMINDER_THRESHOLDS:
-            raise TelegramRegistryError("traffic reminder threshold is invalid")
-        with connect(self._db_path) as conn:
-            identity = conn.execute(
-                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
-            ).fetchone()
-            if identity is None:
-                raise TelegramRegistryError("Telegram identity was not found")
-            conn.execute(
-                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
-                (user_id,),
-            )
-            current = conn.execute(
-                "SELECT traffic_reminder_thresholds FROM telegram_notification_preferences WHERE telegram_user_id = ?",
-                (user_id,),
-            ).fetchone()
-            thresholds = set(_normalize_traffic_thresholds(current[0] if current else None))
-            if threshold_percent in thresholds:
-                thresholds.remove(threshold_percent)
-            else:
-                thresholds.add(threshold_percent)
-            # A traffic category with no selected bands is equivalent to off,
-            # but retain the empty selection so the user's next enable is explicit.
-            conn.execute(
-                """
-                UPDATE telegram_notification_preferences
-                SET traffic_reminder_thresholds = ?,
-                    traffic_reminders_enabled = ?,
-                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE telegram_user_id = ?
-                """,
-                (json.dumps(sorted(thresholds), separators=(",", ":")), int(bool(thresholds)), user_id),
-            )
-        return self.get_notification_preferences(user_id)
+        return _telegram_registry_traffic.toggle_traffic_reminder_threshold(
+            self,
+            telegram_user_id,
+            threshold_percent,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            traffic_reminder_thresholds=TRAFFIC_REMINDER_THRESHOLDS,
+            normalize_traffic_thresholds=_normalize_traffic_thresholds,
+        )
 
     @staticmethod
     def _active_telegram_customer(conn: sqlite3.Connection, telegram_user_id: int) -> tuple[int, str]:
@@ -3134,385 +3029,64 @@ class TelegramRegistry:
         each node enforces its own client counter.
         """
 
-        with connect(self._db_path) as conn:
-            rows = conn.execute(
-                f"""
-                SELECT i.telegram_user_id, c.id, c.email_display,
-                       b.node_id, b.inbound_id, b.remote_client_id,
-                       a.desired_total_bytes,
-                       COALESCE(p.traffic_reminder_thresholds, '[80,95,100]')
-                FROM telegram_identities AS i
-                JOIN customers AS c ON c.id = i.customer_id
-                JOIN customer_node_bindings AS b ON b.customer_id = c.id
-                JOIN nodes AS n ON n.id = b.node_id
-                LEFT JOIN telegram_notification_preferences AS p
-                  ON p.telegram_user_id = i.telegram_user_id
-                LEFT JOIN telegram_provisioning_attempts AS a ON a.id = (
-                    SELECT candidate.id
-                    FROM telegram_provisioning_attempts AS candidate
-                    JOIN telegram_provisioning_jobs AS j ON j.id = candidate.job_id
-                    WHERE j.customer_id = c.id
-                      AND candidate.node_id = b.node_id
-                      AND candidate.inbound_id = b.inbound_id
-                      AND candidate.remote_client_id = b.remote_client_id
-                      AND candidate.status = 'succeeded'
-                    ORDER BY candidate.id DESC
-                    LIMIT 1
-                )
-                WHERE i.access_status = 'approved'
-                  AND c.status = 'active' AND c.deleted_at IS NULL
-                  AND b.management_state = 'confirmed' AND b.desired_enabled = 1
-                  AND n.enabled = 1
-                  AND COALESCE(p.background_notifications_enabled, 1) = 1
-                  AND COALESCE(p.traffic_reminders_enabled, 0) = 1
-                  AND (
-                    c.origin != 'telegram'
-                    OR NOT EXISTS (
-                        SELECT 1 FROM telegram_provisioning_jobs AS j
-                        WHERE j.customer_id = c.id
-                          AND j.trigger = 'approve_new'
-                          AND NOT {INITIAL_JOB_COMPLETE_SQL}
-                    )
-                  )
-                ORDER BY i.telegram_user_id, b.node_id, b.inbound_id
-                """
-            ).fetchall()
-
-        grouped: dict[tuple[int, int, str, tuple[int, ...]], list[tuple[int, int, str, int | None]]] = {}
-        for row in rows:
-            key = (int(row[0]), int(row[1]), str(row[2]), _normalize_traffic_thresholds(row[7]))
-            grouped.setdefault(key, []).append((int(row[3]), int(row[4]), str(row[5]), row[6]))
-
-        candidates: list[CustomerTrafficQuotaCandidate] = []
-        for (telegram_user_id, customer_id, email_display, thresholds), bindings in grouped.items():
-            if not bindings or any(item[3] is None or int(item[3]) <= 0 for item in bindings):
-                continue
-            quota_bindings = tuple(
-                CustomerTrafficQuotaBinding(node_id=node_id, inbound_id=inbound_id, remote_client_id=remote_client_id)
-                for node_id, inbound_id, remote_client_id, _quota in bindings
-            )
-            quota_plan = {
-                "customer_id": customer_id,
-                "bindings": [
-                    {
-                        "node_id": binding.node_id,
-                        "inbound_id": binding.inbound_id,
-                        "remote_client_id": binding.remote_client_id,
-                        "total_bytes": int(quota),
-                    }
-                    for binding, (_node_id, _inbound_id, _remote_client_id, quota) in zip(quota_bindings, bindings)
-                ],
-            }
-            candidates.append(
-                CustomerTrafficQuotaCandidate(
-                    telegram_user_id=telegram_user_id,
-                    customer_id=customer_id,
-                    email_display=email_display,
-                    quota_total_bytes=sum(int(item[3]) for item in bindings),
-                    quota_plan_digest=_payload_digest(quota_plan),
-                    bindings=quota_bindings,
-                    traffic_reminder_thresholds=thresholds,
-                )
-            )
-        return tuple(candidates)
+        return _telegram_registry_traffic.list_traffic_reminder_candidates(
+            self,
+            initial_job_complete_sql=INITIAL_JOB_COMPLETE_SQL,
+            normalize_traffic_thresholds=_normalize_traffic_thresholds,
+            payload_digest=_payload_digest,
+            quota_binding_type=CustomerTrafficQuotaBinding,
+            quota_candidate_type=CustomerTrafficQuotaCandidate,
+        )
 
     def list_customer_traffic_observation_bindings(self) -> dict[int, tuple[CustomerTrafficObservationBinding, ...]]:
         """Return local exact bindings eligible to consume a collector snapshot."""
 
-        with connect(self._db_path) as conn:
-            rows = conn.execute(
-                """
-                SELECT c.id, b.node_id, b.inbound_id, b.remote_email
-                FROM customers AS c
-                JOIN customer_node_bindings AS b ON b.customer_id = c.id
-                JOIN nodes AS n ON n.id = b.node_id
-                WHERE c.status = 'active' AND c.deleted_at IS NULL
-                  AND b.management_state = 'confirmed' AND b.desired_enabled = 1
-                  AND n.enabled = 1
-                  AND EXISTS (
-                      SELECT 1 FROM telegram_identities AS i
-                      WHERE i.customer_id = c.id AND i.access_status = 'approved'
-                  )
-                ORDER BY c.id, b.node_id, b.inbound_id
-                """
-            ).fetchall()
-        grouped: dict[int, list[CustomerTrafficObservationBinding]] = {}
-        unsafe_customers: set[int] = set()
-        seen: set[tuple[int, int, int]] = set()
-        for customer_id, node_id, inbound_id, remote_email in rows:
-            identity = (int(customer_id), int(node_id), int(inbound_id))
-            if identity in seen:
-                unsafe_customers.add(identity[0])
-                continue
-            seen.add(identity)
-            try:
-                email = canonicalize_email(str(remote_email))
-            except TelegramRegistryError:
-                unsafe_customers.add(identity[0])
-                continue
-            grouped.setdefault(identity[0], []).append(
-                CustomerTrafficObservationBinding(*identity, remote_email=email)
-            )
-        return {
-            customer_id: tuple(bindings)
-            for customer_id, bindings in grouped.items()
-            if customer_id not in unsafe_customers and bindings
-        }
+        return _telegram_registry_traffic.list_customer_traffic_observation_bindings(
+            self,
+            canonicalize_email=canonicalize_email,
+            binding_type=CustomerTrafficObservationBinding,
+            error_type=TelegramRegistryError,
+        )
 
     def observe_customer_traffic_bindings(
         self, observations: dict[int, dict[tuple[int, int], int]]
     ) -> tuple[CustomerTrafficLedger, ...]:
         """Persist one complete collector observation batch by exact binding."""
 
-        normalized: dict[int, dict[tuple[int, int], int]] = {}
-        for raw_customer_id, raw_bindings in observations.items():
-            customer_id = _positive_int(raw_customer_id, "customer_id")
-            if not isinstance(raw_bindings, dict) or not raw_bindings:
-                raise TelegramRegistryError("observations must contain at least one binding")
-            customer_bindings: dict[tuple[int, int], int] = {}
-            for raw_binding, observed_bytes in raw_bindings.items():
-                if (
-                    not isinstance(raw_binding, tuple)
-                    or len(raw_binding) != 2
-                    or any(isinstance(value, bool) or not isinstance(value, int) for value in raw_binding)
-                ):
-                    raise TelegramRegistryError("binding must be a (node_id, inbound_id) tuple")
-                node_id = _positive_int(raw_binding[0], "node_id")
-                inbound_id = _positive_int(raw_binding[1], "inbound_id")
-                if (
-                    isinstance(observed_bytes, bool)
-                    or not isinstance(observed_bytes, int)
-                    or observed_bytes < 0
-                ):
-                    raise TelegramRegistryError("observed_bytes must be a non-negative integer")
-                customer_bindings[(node_id, inbound_id)] = observed_bytes
-            normalized[customer_id] = customer_bindings
-
-        with connect(self._db_path) as conn:
-            result: list[CustomerTrafficLedger] = []
-            for customer_id, customer_bindings in sorted(normalized.items()):
-                if conn.execute("SELECT 1 FROM customers WHERE id = ?", (customer_id,)).fetchone() is None:
-                    raise TelegramRegistryError("customer was not found")
-
-                observed_bytes = sum(customer_bindings.values())
-                binding_rows = conn.execute(
-                    """
-                    SELECT node_id, inbound_id, last_observed_bytes
-                    FROM customer_traffic_binding_ledger
-                    WHERE customer_id = ?
-                    """,
-                    (customer_id,),
-                ).fetchall()
-                has_binding_ledger = bool(binding_rows)
-                lifetime_delta = 0
-
-                if not has_binding_ledger:
-                    ledger_row = conn.execute(
-                        "SELECT lifetime_bytes FROM customer_traffic_ledger WHERE customer_id = ?",
-                        (customer_id,),
-                    ).fetchone()
-                    if ledger_row is None:
-                        conn.execute(
-                            """
-                            INSERT INTO customer_traffic_ledger
-                                (customer_id, lifetime_bytes, last_observed_bytes)
-                            VALUES (?, ?, ?)
-                            """,
-                            (customer_id, observed_bytes, observed_bytes),
-                        )
-                    else:
-                        conn.execute(
-                            """
-                            UPDATE customer_traffic_ledger
-                            SET lifetime_bytes = ?, last_observed_bytes = ?,
-                                last_observed_at = CURRENT_TIMESTAMP,
-                                row_version = row_version + 1
-                            WHERE customer_id = ?
-                            """,
-                            (observed_bytes, observed_bytes, customer_id),
-                        )
-                    for (node_id, inbound_id), value in customer_bindings.items():
-                        conn.execute(
-                            """
-                            INSERT INTO customer_traffic_binding_ledger
-                                (customer_id, node_id, inbound_id, last_observed_bytes)
-                            VALUES (?, ?, ?, ?)
-                            """,
-                            (customer_id, node_id, inbound_id, value),
-                        )
-                else:
-                    previous_by_binding = {
-                        (int(row[0]), int(row[1])): int(row[2]) for row in binding_rows
-                    }
-                    for (node_id, inbound_id), value in customer_bindings.items():
-                        previous = previous_by_binding.get((node_id, inbound_id))
-                        if previous is None:
-                            lifetime_delta += value
-                            conn.execute(
-                                """
-                                INSERT INTO customer_traffic_binding_ledger
-                                    (customer_id, node_id, inbound_id, last_observed_bytes)
-                                VALUES (?, ?, ?, ?)
-                                """,
-                                (customer_id, node_id, inbound_id, value),
-                            )
-                        else:
-                            lifetime_delta += value - previous if value >= previous else value
-                            conn.execute(
-                                """
-                                UPDATE customer_traffic_binding_ledger
-                                SET last_observed_bytes = ?, updated_at = CURRENT_TIMESTAMP
-                                WHERE customer_id = ? AND node_id = ? AND inbound_id = ?
-                                """,
-                                (value, customer_id, node_id, inbound_id),
-                            )
-
-                    ledger_row = conn.execute(
-                        "SELECT lifetime_bytes FROM customer_traffic_ledger WHERE customer_id = ?",
-                        (customer_id,),
-                    ).fetchone()
-                    if ledger_row is None:
-                        conn.execute(
-                            """
-                            INSERT INTO customer_traffic_ledger
-                                (customer_id, lifetime_bytes, last_observed_bytes)
-                            VALUES (?, ?, ?)
-                            """,
-                            (customer_id, lifetime_delta, observed_bytes),
-                        )
-                    else:
-                        conn.execute(
-                            """
-                            UPDATE customer_traffic_ledger
-                            SET lifetime_bytes = lifetime_bytes + ?, last_observed_bytes = ?,
-                                last_observed_at = CURRENT_TIMESTAMP,
-                                row_version = row_version + 1
-                            WHERE customer_id = ?
-                            """,
-                            (lifetime_delta, observed_bytes, customer_id),
-                        )
-
-                stored = conn.execute(
-                    """
-                    SELECT customer_id, lifetime_bytes, last_observed_bytes, last_observed_at
-                    FROM customer_traffic_ledger WHERE customer_id = ?
-                    """,
-                    (customer_id,),
-                ).fetchone()
-                assert stored is not None
-                result.append(
-                    CustomerTrafficLedger(
-                        int(stored[0]), int(stored[1]), int(stored[2]), str(stored[3])
-                    )
-                )
-            return tuple(result)
+        return _telegram_registry_traffic.observe_customer_traffic_bindings(
+            self,
+            observations,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            ledger_type=CustomerTrafficLedger,
+        )
 
     def get_customer_traffic(self, customer_id: int) -> CustomerTrafficLedger:
-        local_customer_id = _positive_int(customer_id, "customer_id")
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT customer_id, lifetime_bytes, last_observed_bytes, last_observed_at
-                FROM customer_traffic_ledger WHERE customer_id = ?
-                """,
-                (local_customer_id,),
-            ).fetchone()
-        if row is None:
-            return CustomerTrafficLedger(local_customer_id, 0, 0, "")
-        return CustomerTrafficLedger(
-            customer_id=int(row[0]), lifetime_bytes=int(row[1]),
-            last_observed_bytes=int(row[2]), last_observed_at=str(row[3]),
+        return _telegram_registry_traffic.get_customer_traffic(
+            self, customer_id, positive_int=_positive_int, ledger_type=CustomerTrafficLedger
         )
 
     def submit_suspended_appeal(self, *, telegram_user_id: int, body: str) -> AppealResult:
         """Store one bounded appeal; it never changes customer access."""
 
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        normalized_body = body.strip()
-        if not 1 <= len(normalized_body) <= 1000:
-            raise TelegramRegistryError("appeal body must contain 1 to 1000 characters")
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT i.customer_id, i.access_status, c.status
-                FROM telegram_identities AS i
-                JOIN customers AS c ON c.id = i.customer_id
-                WHERE i.telegram_user_id = ?
-                """,
-                (user_id,),
-            ).fetchone()
-            if (
-                row is None
-                or str(row[1]) != "approved"
-                or str(row[2]) not in SUSPENDED_STATUSES
-            ):
-                raise TelegramRegistryError("appeal is available only for a suspended customer")
-            try:
-                cursor = conn.execute(
-                    """
-                    INSERT INTO telegram_appeals (telegram_user_id, customer_id, body)
-                    VALUES (?, ?, ?)
-                    """,
-                    (user_id, int(row[0]), normalized_body),
-                )
-                appeal_id = int(cursor.lastrowid)
-                result = AppealResult(appeal_id=appeal_id, created=True, status="open")
-                conn.execute(
-                    """
-                    INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
-                    VALUES ('admin_appeal_created', ?, ?, ?)
-                    """,
-                    (str(appeal_id), f"admin:appeal-created:{appeal_id}", json.dumps({"appeal_id": appeal_id})),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO telegram_audit_log
-                        (event_type, actor_type, actor_id, entity_type, entity_id)
-                    VALUES ('appeal_created', 'telegram_user', ?, 'telegram_appeal', ?)
-                    """,
-                    (str(user_id), str(appeal_id)),
-                )
-            except sqlite3.IntegrityError:
-                existing = conn.execute(
-                    """
-                    SELECT id, status FROM telegram_appeals
-                    WHERE telegram_user_id = ? AND status = 'open'
-                    ORDER BY id DESC LIMIT 1
-                    """,
-                    (user_id,),
-                ).fetchone()
-                if existing is None:
-                    raise TelegramRegistryError("appeal could not be stored")
-                return AppealResult(appeal_id=int(existing[0]), created=False, status=str(existing[1]))
-        return result
+        return _telegram_registry_support.submit_suspended_appeal(
+            self,
+            telegram_user_id=telegram_user_id,
+            body=body,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            suspended_statuses=SUSPENDED_STATUSES,
+            appeal_result_type=AppealResult,
+        )
 
     def list_appeals(self, *, status: str = "open", limit: int = 100) -> list[AppealAdminItem]:
-        if status not in {"open", "handled", "rejected", "all"}:
-            raise TelegramRegistryError("appeal status is invalid")
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
-            raise TelegramRegistryError("limit must be an integer from 1 to 200")
-        where = "" if status == "all" else "WHERE a.status = ?"
-        params: tuple[Any, ...] = (status, limit) if status != "all" else (limit,)
-        with connect(self._db_path) as conn:
-            rows = conn.execute(
-                """
-                SELECT a.id, a.telegram_user_id, a.customer_id, c.email_display, a.body, a.status,
-                       a.row_version, a.created_at, a.updated_at
-                FROM telegram_appeals AS a
-                JOIN customers AS c ON c.id = a.customer_id
-                """
-                + where
-                + " ORDER BY a.created_at DESC, a.id DESC LIMIT ?",
-                params,
-            ).fetchall()
-        return [
-            AppealAdminItem(
-                appeal_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
-                email_display=str(row[3]), body=str(row[4]), status=str(row[5]), row_version=int(row[6]),
-                created_at=str(row[7]), updated_at=str(row[8]),
-            )
-            for row in rows
-        ]
+        return _telegram_registry_support.list_appeals(
+            self,
+            status=status,
+            limit=limit,
+            error_type=TelegramRegistryError,
+            appeal_item_type=AppealAdminItem,
+        )
 
     def resolve_appeal(
         self,
@@ -3523,179 +3097,46 @@ class TelegramRegistry:
         idempotency_key: str,
         resolved_by: str,
     ) -> AppealResolutionResult:
-        normalized_id = _positive_int(appeal_id, "appeal_id")
-        expected_version = _positive_int(expected_row_version, "expected_row_version")
-        if status not in {"handled", "rejected"}:
-            raise TelegramRegistryError("appeal resolution status is invalid")
-        key = _nonempty(idempotency_key, "idempotency_key")
-        actor = _nonempty(resolved_by, "resolved_by")
-        digest = _payload_digest({"appeal_id": normalized_id, "expected_row_version": expected_version, "status": status})
-        scope = "resolve_appeal"
-        with connect(self._db_path) as conn:
-            receipt = conn.execute(
-                "SELECT payload_digest, result_json FROM telegram_command_receipts WHERE scope = ? AND idempotency_key = ?",
-                (scope, key),
-            ).fetchone()
-            if receipt:
-                if str(receipt[0]) != digest:
-                    raise IdempotencyConflictError("idempotency key was already used for another command")
-                return AppealResolutionResult(**json.loads(str(receipt[1])))
-            row = conn.execute(
-                "SELECT row_version, status FROM telegram_appeals WHERE id = ?", (normalized_id,)
-            ).fetchone()
-            if row is None:
-                raise TelegramRegistryError("appeal was not found")
-            if int(row[0]) != expected_version or str(row[1]) != "open":
-                raise VersionConflictError("appeal was updated by another administrator")
-            update = conn.execute(
-                """
-                UPDATE telegram_appeals
-                SET status = ?, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status = 'open' AND row_version = ?
-                """,
-                (status, normalized_id, expected_version),
-            )
-            if update.rowcount != 1:
-                raise VersionConflictError("appeal was updated by another administrator")
-            result = AppealResolutionResult(normalized_id, status, expected_version + 1)
-            conn.execute(
-                """
-                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
-                VALUES (?, ?, ?, ?)
-                """,
-                (scope, key, digest, json.dumps(asdict(result), separators=(",", ":"))),
-            )
-            conn.execute(
-                """
-                INSERT INTO telegram_audit_log
-                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
-                VALUES ('appeal_resolved', 'admin', ?, 'telegram_appeal', ?, ?)
-                """,
-                (actor, str(normalized_id), digest),
-            )
-        return result
+        return _telegram_registry_support.resolve_appeal(
+            self,
+            appeal_id=appeal_id,
+            expected_row_version=expected_row_version,
+            status=status,
+            idempotency_key=idempotency_key,
+            resolved_by=resolved_by,
+            positive_int=_positive_int,
+            nonempty=_nonempty,
+            payload_digest=_payload_digest,
+            error_type=TelegramRegistryError,
+            idempotency_conflict_type=IdempotencyConflictError,
+            version_conflict_type=VersionConflictError,
+            resolution_type=AppealResolutionResult,
+        )
 
     def begin_support_request(self, *, telegram_user_id: int, category: str) -> None:
         """Remember one bounded support category without creating a ticket yet."""
 
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        if category not in SUPPORT_CATEGORIES:
-            raise TelegramRegistryError("support category is invalid")
-        with connect(self._db_path) as conn:
-            identity = conn.execute(
-                """
-                SELECT i.customer_id, i.access_status, c.status
-                FROM telegram_identities AS i
-                JOIN customers AS c ON c.id = i.customer_id
-                WHERE i.telegram_user_id = ?
-                """,
-                (user_id,),
-            ).fetchone()
-            if identity is None or str(identity[1]) != "approved" or str(identity[2]) != "active":
-                raise TelegramRegistryError("support is available only for an active customer")
-            customer_id = int(identity[0])
-            open_request = conn.execute(
-                """
-                SELECT 1 FROM telegram_support_requests
-                WHERE customer_id = ? AND status IN ('open', 'read')
-                """,
-                (customer_id,),
-            ).fetchone()
-            if open_request is not None:
-                raise TelegramRegistryError("an open support request already exists")
-            conn.execute(
-                """
-                INSERT INTO telegram_user_drafts
-                    (telegram_user_id, action, customer_id, category)
-                VALUES (?, 'support_request', ?, ?)
-                ON CONFLICT(telegram_user_id) DO UPDATE SET
-                    action = 'support_request', customer_id = excluded.customer_id,
-                    category = excluded.category, updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id, customer_id, category),
-            )
+        return _telegram_registry_support.begin_support_request(
+            self,
+            telegram_user_id=telegram_user_id,
+            category=category,
+            positive_int=_positive_int,
+            support_categories=SUPPORT_CATEGORIES,
+            error_type=TelegramRegistryError,
+        )
 
     def submit_pending_support_request(
         self, *, telegram_user_id: int, body: str
     ) -> TelegramSupportRequest | None:
         """Create a ticket only from an explicit support draft and bounded text."""
 
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        normalized_body = body.strip()
-        if not 1 <= len(normalized_body) <= 1000:
-            raise TelegramRegistryError("support request body must contain 1 to 1000 characters")
-        with connect(self._db_path) as conn:
-            draft = conn.execute(
-                """
-                SELECT customer_id, category FROM telegram_user_drafts
-                WHERE telegram_user_id = ? AND action = 'support_request'
-                """,
-                (user_id,),
-            ).fetchone()
-            if draft is None:
-                return None
-            customer_id, category = int(draft[0]), str(draft[1])
-            identity = conn.execute(
-                """
-                SELECT i.customer_id, i.access_status, c.status
-                FROM telegram_identities AS i
-                JOIN customers AS c ON c.id = i.customer_id
-                WHERE i.telegram_user_id = ?
-                """,
-                (user_id,),
-            ).fetchone()
-            if (
-                identity is None
-                or int(identity[0]) != customer_id
-                or str(identity[1]) != "approved"
-                or str(identity[2]) != "active"
-            ):
-                raise TelegramRegistryError("support is available only for an active customer")
-            try:
-                cursor = conn.execute(
-                    """
-                    INSERT INTO telegram_support_requests
-                        (telegram_user_id, customer_id, category, body)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (user_id, customer_id, category, normalized_body),
-                )
-            except sqlite3.IntegrityError as exc:
-                raise TelegramRegistryError("an open support request already exists") from exc
-            request_id = int(cursor.lastrowid)
-            conn.execute("DELETE FROM telegram_user_drafts WHERE telegram_user_id = ?", (user_id,))
-            conn.execute(
-                """
-                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
-                VALUES ('admin_support_created', ?, ?)
-                """,
-                (str(request_id), f"admin:support-created:{request_id}"),
-            )
-            conn.execute(
-                """
-                INSERT INTO telegram_audit_log
-                    (event_type, actor_type, actor_id, entity_type, entity_id)
-                VALUES ('support_created', 'telegram_user', ?, 'telegram_support_request', ?)
-                """,
-                (str(user_id), str(request_id)),
-            )
-            row = conn.execute(
-                """
-                SELECT s.id, s.telegram_user_id, s.customer_id, c.email_display,
-                       s.category, s.body, s.status, s.row_version, s.created_at,
-                       s.updated_at, s.admin_response
-                FROM telegram_support_requests AS s
-                JOIN customers AS c ON c.id = s.customer_id
-                WHERE s.id = ?
-                """,
-                (request_id,),
-            ).fetchone()
-        assert row is not None
-        return TelegramSupportRequest(
-            support_request_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
-            email_display=str(row[3]), category=str(row[4]), body=str(row[5]), status=str(row[6]),
-            row_version=int(row[7]), created_at=str(row[8]), updated_at=str(row[9]),
-            admin_response=str(row[10]) if row[10] is not None else None,
+        return _telegram_registry_support.submit_pending_support_request(
+            self,
+            telegram_user_id=telegram_user_id,
+            body=body,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            support_request_type=TelegramSupportRequest,
         )
 
     def clear_support_draft(self, telegram_user_id: int) -> None:
@@ -3704,61 +3145,23 @@ class TelegramRegistry:
             conn.execute("DELETE FROM telegram_user_drafts WHERE telegram_user_id = ?", (user_id,))
 
     def list_support_requests(self, *, status: str = "open", limit: int = 100) -> list[TelegramSupportRequest]:
-        if status not in {"open", "read", "resolved", "all"}:
-            raise TelegramRegistryError("support request status is invalid")
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
-            raise TelegramRegistryError("limit must be an integer from 1 to 200")
-        where = "" if status == "all" else "WHERE s.status = ?"
-        params: tuple[Any, ...] = (status, limit) if status != "all" else (limit,)
-        with connect(self._db_path) as conn:
-            rows = conn.execute(
-                """
-                SELECT s.id, s.telegram_user_id, s.customer_id, c.email_display,
-                       s.category, s.body, s.status, s.row_version, s.created_at,
-                       s.updated_at, s.admin_response
-                FROM telegram_support_requests AS s
-                JOIN customers AS c ON c.id = s.customer_id
-                """
-                + where
-                + " ORDER BY s.created_at DESC, s.id DESC LIMIT ?",
-                params,
-            ).fetchall()
-        return [
-            TelegramSupportRequest(
-                support_request_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
-                email_display=str(row[3]), category=str(row[4]), body=str(row[5]), status=str(row[6]),
-                row_version=int(row[7]), created_at=str(row[8]), updated_at=str(row[9]),
-                admin_response=str(row[10]) if row[10] is not None else None,
-            )
-            for row in rows
-        ]
+        return _telegram_registry_support.list_support_requests(
+            self,
+            status=status,
+            limit=limit,
+            error_type=TelegramRegistryError,
+            support_request_type=TelegramSupportRequest,
+        )
 
     def list_customer_support_requests(self, customer_id: int, *, limit: int = 20) -> list[TelegramSupportRequest]:
-        local_customer_id = _positive_int(customer_id, "customer_id")
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-            raise TelegramRegistryError("limit must be an integer from 1 to 100")
-        with connect(self._db_path) as conn:
-            rows = conn.execute(
-                """
-                SELECT s.id, s.telegram_user_id, s.customer_id, c.email_display,
-                       s.category, s.body, s.status, s.row_version, s.created_at,
-                       s.updated_at, s.admin_response
-                FROM telegram_support_requests AS s
-                JOIN customers AS c ON c.id = s.customer_id
-                WHERE s.customer_id = ?
-                ORDER BY s.created_at DESC, s.id DESC LIMIT ?
-                """,
-                (local_customer_id, limit),
-            ).fetchall()
-        return [
-            TelegramSupportRequest(
-                support_request_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
-                email_display=str(row[3]), category=str(row[4]), body=str(row[5]), status=str(row[6]),
-                row_version=int(row[7]), created_at=str(row[8]), updated_at=str(row[9]),
-                admin_response=str(row[10]) if row[10] is not None else None,
-            )
-            for row in rows
-        ]
+        return _telegram_registry_support.list_customer_support_requests(
+            self,
+            customer_id,
+            limit=limit,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            support_request_type=TelegramSupportRequest,
+        )
 
     def resolve_support_request(
         self,
@@ -3769,82 +3172,26 @@ class TelegramRegistry:
         idempotency_key: str,
         resolved_by: str,
     ) -> TelegramSupportResolution:
-        request_id = _positive_int(support_request_id, "support_request_id")
-        expected_version = _positive_int(expected_row_version, "expected_row_version")
-        normalized_response = response.strip() if isinstance(response, str) else None
-        if normalized_response is not None and not 1 <= len(normalized_response) <= 1000:
-            raise TelegramRegistryError("support response must contain 1 to 1000 characters")
-        key = _nonempty(idempotency_key, "idempotency_key")
-        actor = _nonempty(resolved_by, "resolved_by")
-        digest = _payload_digest({
-            "support_request_id": request_id, "expected_row_version": expected_version,
-            "response": normalized_response,
-        })
-        with connect(self._db_path) as conn:
-            receipt = conn.execute(
-                "SELECT payload_digest, result_json FROM telegram_command_receipts "
-                "WHERE scope = 'resolve_support_request' AND idempotency_key = ?",
-                (key,),
-            ).fetchone()
-            if receipt:
-                if str(receipt[0]) != digest:
-                    raise IdempotencyConflictError("idempotency key was already used for another command")
-                return TelegramSupportResolution(**json.loads(str(receipt[1])))
-            row = conn.execute(
-                "SELECT telegram_user_id, status, row_version FROM telegram_support_requests WHERE id = ?",
-                (request_id,),
-            ).fetchone()
-            if row is None or str(row[1]) not in {"open", "read"} or int(row[2]) != expected_version:
-                raise VersionConflictError("support request was updated by another administrator")
-            update = conn.execute(
-                """
-                UPDATE telegram_support_requests
-                SET status = 'resolved', admin_response = ?, resolved_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1
-                WHERE id = ? AND status IN ('open', 'read') AND row_version = ?
-                """,
-                (normalized_response, request_id, expected_version),
-            )
-            if update.rowcount != 1:
-                raise VersionConflictError("support request was updated by another administrator")
-            result = TelegramSupportResolution(request_id, "resolved", expected_version + 1)
-            conn.execute(
-                """
-                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
-                VALUES ('user_support_resolved', ?, ?)
-                """,
-                (str(request_id), f"user:support-resolved:{request_id}"),
-            )
-            conn.execute(
-                """
-                INSERT INTO telegram_audit_log
-                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
-                VALUES ('support_resolved', 'admin', ?, 'telegram_support_request', ?, ?)
-                """,
-                (actor, str(request_id), digest),
-            )
-            conn.execute(
-                """
-                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
-                VALUES ('resolve_support_request', ?, ?, ?)
-                """,
-                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
-            )
-        return result
+        return _telegram_registry_support.resolve_support_request(
+            self,
+            support_request_id=support_request_id,
+            expected_row_version=expected_row_version,
+            response=response,
+            idempotency_key=idempotency_key,
+            resolved_by=resolved_by,
+            positive_int=_positive_int,
+            nonempty=_nonempty,
+            payload_digest=_payload_digest,
+            error_type=TelegramRegistryError,
+            idempotency_conflict_type=IdempotencyConflictError,
+            version_conflict_type=VersionConflictError,
+            resolution_type=TelegramSupportResolution,
+        )
 
     def get_service_notice(self) -> TelegramServiceNotice:
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                "SELECT body, is_active, row_version, updated_by, updated_at FROM telegram_service_notice WHERE id = 1"
-            ).fetchone()
-        if row is None:
-            return TelegramServiceNotice(None, False, 0, "system", None)
-        return TelegramServiceNotice(
-            body=str(row[0]) if row[0] is not None else None,
-            is_active=bool(row[1]),
-            row_version=int(row[2]),
-            updated_by=str(row[3]),
-            updated_at=str(row[4]),
+        return _telegram_registry_notices.get_service_notice(
+            self,
+            notice_type=TelegramServiceNotice,
         )
 
     def set_service_notice(
@@ -3855,81 +3202,19 @@ class TelegramRegistry:
         idempotency_key: str,
         updated_by: str,
     ) -> TelegramServiceNotice:
-        if (
-            isinstance(expected_row_version, bool)
-            or not isinstance(expected_row_version, int)
-            or expected_row_version < 0
-        ):
-            raise TelegramRegistryError("expected_row_version must be a non-negative integer")
-        expected_version = expected_row_version
-        key = _nonempty(idempotency_key, "idempotency_key")
-        actor = _nonempty(updated_by, "updated_by")
-        normalized_body = body.strip() if isinstance(body, str) else None
-        if normalized_body is not None and not 1 <= len(normalized_body) <= 1000:
-            raise TelegramRegistryError("service notice must contain 1 to 1000 characters")
-        digest = _payload_digest({"body": normalized_body, "expected_row_version": expected_version})
-        scope = "set_service_notice"
-        with connect(self._db_path) as conn:
-            receipt = conn.execute(
-                "SELECT payload_digest, result_json FROM telegram_command_receipts WHERE scope = ? AND idempotency_key = ?",
-                (scope, key),
-            ).fetchone()
-            if receipt:
-                if str(receipt[0]) != digest:
-                    raise IdempotencyConflictError("idempotency key was already used for another command")
-                return TelegramServiceNotice(**json.loads(str(receipt[1])))
-            current = conn.execute(
-                "SELECT row_version FROM telegram_service_notice WHERE id = 1"
-            ).fetchone()
-            current_version = int(current[0]) if current is not None else 0
-            if current_version != expected_version:
-                raise VersionConflictError("service notice was updated by another administrator")
-            if current is None:
-                conn.execute(
-                    "INSERT INTO telegram_service_notice (id, body, is_active, updated_by) VALUES (1, ?, ?, ?)",
-                    (normalized_body, int(normalized_body is not None), actor),
-                )
-                result_version = 1
-            else:
-                update = conn.execute(
-                    """
-                    UPDATE telegram_service_notice
-                    SET body = ?, is_active = ?, row_version = row_version + 1,
-                        updated_by = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = 1 AND row_version = ?
-                    """,
-                    (normalized_body, int(normalized_body is not None), actor, expected_version),
-                )
-                if update.rowcount != 1:
-                    raise VersionConflictError("service notice was updated by another administrator")
-                result_version = expected_version + 1
-            row = conn.execute(
-                "SELECT body, is_active, row_version, updated_by, updated_at FROM telegram_service_notice WHERE id = 1"
-            ).fetchone()
-            assert row is not None
-            result = TelegramServiceNotice(
-                body=str(row[0]) if row[0] is not None else None,
-                is_active=bool(row[1]),
-                row_version=result_version,
-                updated_by=str(row[3]),
-                updated_at=str(row[4]),
-            )
-            conn.execute(
-                """
-                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
-                VALUES (?, ?, ?, ?)
-                """,
-                (scope, key, digest, json.dumps(asdict(result), separators=(",", ":"))),
-            )
-            conn.execute(
-                """
-                INSERT INTO telegram_audit_log
-                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
-                VALUES ('service_notice_updated', 'admin', ?, 'telegram_service_notice', '1', ?)
-                """,
-                (actor, digest),
-            )
-        return result
+        return _telegram_registry_notices.set_service_notice(
+            self,
+            body=body,
+            expected_row_version=expected_row_version,
+            idempotency_key=idempotency_key,
+            updated_by=updated_by,
+            nonempty=_nonempty,
+            payload_digest=_payload_digest,
+            error_type=TelegramRegistryError,
+            idempotency_conflict_type=IdempotencyConflictError,
+            version_conflict_type=VersionConflictError,
+            notice_type=TelegramServiceNotice,
+        )
 
     def set_service_notice_draft(
         self, *, admin_telegram_user_id: int, expected_row_version: int
@@ -5446,24 +4731,15 @@ class TelegramRegistry:
     ) -> bool:
         """Persist Telegram's update id before any state-changing handling."""
 
-        normalized_update_id = _positive_int(update_id, "update_id")
-        normalized_user_id = (
-            _positive_int(telegram_user_id, "telegram_user_id")
-            if telegram_user_id is not None
-            else None
+        return _telegram_registry_updates.claim_update(
+            self,
+            update_id=update_id,
+            telegram_user_id=telegram_user_id,
+            update_type=update_type,
+            payload_digest=payload_digest,
+            positive_int=_positive_int,
+            nonempty=_nonempty,
         )
-        with connect(self._db_path) as conn:
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO telegram_updates (update_id, telegram_user_id, update_type, payload_digest)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (normalized_update_id, normalized_user_id, _nonempty(update_type, "update_type"), _nonempty(payload_digest, "payload_digest")),
-                )
-            except sqlite3.IntegrityError:
-                return False
-        return True
 
     def store_update_responses(
         self,
@@ -5473,131 +4749,62 @@ class TelegramRegistry:
     ) -> None:
         """Store retry-safe replies keyed by Telegram's immutable update id."""
 
-        normalized_update_id = _positive_int(update_id, "update_id")
-        rows: list[tuple[int, int, str, str | None]] = []
-        for index, response in enumerate(responses):
-            chat_id, text, markup = response[:3]
-            photos = response[3] if len(response) > 3 else None
-            normalized_chat_id = _positive_int(chat_id, "chat_id")
-            normalized_text = _nonempty(text, "response_text")
-            if len(normalized_text) > 4096:
-                raise TelegramRegistryError("response_text is too long")
-            if markup is not None and not isinstance(markup, dict):
-                raise TelegramRegistryError("response_markup must be an object")
-            markup_json = (
-                json.dumps(markup, ensure_ascii=False, separators=(",", ":"))
-                if markup is not None
-                else None
-            )
-            if markup_json is not None and len(markup_json) > 16384:
-                raise TelegramRegistryError("response_markup is too long")
-            rows.append((normalized_update_id, index, normalized_chat_id, normalized_text, markup_json,
-                         json.dumps(photos) if photos else None))
-        if not rows:
-            return
-        with connect(self._db_path) as conn:
-            conn.executemany(
-                """
-                INSERT OR IGNORE INTO telegram_update_responses
-                    (update_id, response_index, chat_id, text, reply_markup_json, photo_file_ids)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                rows,
-            )
+        return _telegram_registry_updates.store_update_responses(
+            self,
+            update_id=update_id,
+            responses=responses,
+            positive_int=_positive_int,
+            nonempty=_nonempty,
+            error_type=TelegramRegistryError,
+        )
 
     def pending_update_responses(
         self, update_id: int
     ) -> list[tuple[int, int, str, dict[str, Any] | None]]:
-        normalized_update_id = _positive_int(update_id, "update_id")
-        with connect(self._db_path) as conn:
-            rows = conn.execute(
-                """
-                SELECT response_index, chat_id, text, reply_markup_json, photo_file_ids
-                FROM telegram_update_responses
-                WHERE update_id = ?
-                  AND (
-                    status = 'queued'
-                    OR (status = 'prepared' AND created_at <= datetime('now', '-1 minute'))
-                  )
-                ORDER BY response_index
-                """,
-                (normalized_update_id,),
-            ).fetchall()
-        result: list[tuple[int, int, str, dict[str, Any] | None]] = []
-        for row in rows:
-            markup = None
-            if row[3] is not None:
-                try:
-                    decoded = json.loads(str(row[3]))
-                except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                    raise TelegramRegistryError("stored response markup is invalid") from exc
-                if not isinstance(decoded, dict):
-                    raise TelegramRegistryError("stored response markup is invalid")
-                markup = decoded
-            result.append((int(row[0]), int(row[1]), str(row[2]), markup,
-                           tuple(json.loads(row[4])) if row[4] else None))
-        return result
+        return _telegram_registry_updates.pending_update_responses(
+            self,
+            update_id,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+        )
 
     def mark_update_response_delivered(self, *, update_id: int, response_index: int) -> None:
-        normalized_update_id = _positive_int(update_id, "update_id")
-        if isinstance(response_index, bool) or not isinstance(response_index, int) or response_index < 0:
-            raise TelegramRegistryError("response_index is invalid")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                """
-                UPDATE telegram_update_responses
-                SET status = 'sent', sent_at = CURRENT_TIMESTAMP
-                WHERE update_id = ? AND response_index = ? AND status IN ('prepared', 'queued')
-                """,
-                (normalized_update_id, response_index),
-            )
+        return _telegram_registry_updates.mark_update_response_delivered(
+            self,
+            update_id=update_id,
+            response_index=response_index,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+        )
 
     def mark_update_processed(self, update_id: int) -> None:
         """Record completion time without changing the durable update status."""
 
-        normalized_update_id = _positive_int(update_id, "update_id")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                "UPDATE telegram_updates SET processed_at = CURRENT_TIMESTAMP WHERE update_id = ?",
-                (normalized_update_id,),
-            )
+        return _telegram_registry_updates.mark_update_processed(
+            self,
+            update_id,
+            positive_int=_positive_int,
+        )
 
     def retry_update_response(self, *, update_id: int, response_index: int) -> None:
-        normalized_update_id = _positive_int(update_id, "update_id")
-        if isinstance(response_index, bool) or not isinstance(response_index, int) or response_index < 0:
-            raise TelegramRegistryError("response_index is invalid")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                """
-                UPDATE telegram_update_responses
-                SET status = 'queued'
-                WHERE update_id = ? AND response_index = ? AND status = 'prepared'
-                """,
-                (normalized_update_id, response_index),
-            )
+        return _telegram_registry_updates.retry_update_response(
+            self,
+            update_id=update_id,
+            response_index=response_index,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+        )
 
     def get_subscription_message_receipt(
         self, telegram_user_id: int
     ) -> TelegramSubscriptionMessageReceipt | None:
         """Read a delivery pointer without ever exposing or storing the raw token."""
 
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT telegram_user_id, token_digest, chat_id, message_id
-                FROM telegram_subscription_message_receipts
-                WHERE telegram_user_id = ?
-                """,
-                (user_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return TelegramSubscriptionMessageReceipt(
-            telegram_user_id=int(row[0]),
-            token_digest=str(row[1]),
-            chat_id=int(row[2]),
-            message_id=int(row[3]),
+        return _telegram_registry_updates.get_subscription_message_receipt(
+            self,
+            telegram_user_id,
+            positive_int=_positive_int,
+            receipt_type=TelegramSubscriptionMessageReceipt,
         )
 
     def record_subscription_message_delivery(
@@ -5610,24 +4817,15 @@ class TelegramRegistry:
     ) -> None:
         """Persist only the opaque token digest and Telegram message coordinates."""
 
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        normalized_chat_id = _positive_int(chat_id, "chat_id")
-        normalized_message_id = _positive_int(message_id, "message_id")
-        normalized_digest = _nonempty(token_digest, "token_digest")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO telegram_subscription_message_receipts
-                    (telegram_user_id, token_digest, chat_id, message_id)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(telegram_user_id) DO UPDATE SET
-                    token_digest = excluded.token_digest,
-                    chat_id = excluded.chat_id,
-                    message_id = excluded.message_id,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id, normalized_digest, normalized_chat_id, normalized_message_id),
-            )
+        return _telegram_registry_updates.record_subscription_message_delivery(
+            self,
+            telegram_user_id=telegram_user_id,
+            token_digest=token_digest,
+            chat_id=chat_id,
+            message_id=message_id,
+            positive_int=_positive_int,
+            nonempty=_nonempty,
+        )
 
     def set_node_provisioning_policy(
         self,
