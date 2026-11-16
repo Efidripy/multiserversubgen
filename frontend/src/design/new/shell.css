@@ -117,12 +117,39 @@
   color: var(--ln-text-2);
   box-shadow: none;
 }
+:root[data-design="new"] .sidebar__user-settings {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  margin-left: auto;
+  border: 1px solid var(--ln-line);
+  border-radius: var(--ln-r-sm);
+  background: transparent;
+  color: var(--ln-text-2);
+  box-shadow: none;
+}
+:root[data-design="new"] .sidebar__user-settings:hover:not(:disabled),
+:root[data-design="new"] .sidebar__user-settings.is-active {
+  border-color: var(--ln-line-strong);
+  background: var(--ln-surface-hover);
+  color: var(--ln-text);
+}
+:root[data-design="new"] .sidebar__user-settings--collapsed {
+  right: 2px;
+  bottom: 1px;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+}
 :root[data-design="new"] .sidebar__nav { gap: 4px; padding: 8px; }
 :root[data-design="new"] .sidebar__nav-item {
-  height: 32px;
+  height: auto;
   min-height: 32px;
   gap: 8px;
   padding: 0 8px;
+  align-items: center;
+  overflow: visible;
   border: 0;
   border-radius: var(--ln-r-sm);
   background: transparent;
@@ -131,6 +158,14 @@
   letter-spacing: normal;
   text-transform: none;
   box-shadow: none;
+}
+:root[data-design="new"] .sidebar__nav-label {
+  min-width: 0;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  text-overflow: clip;
 }
 :root[data-design="new"] .sidebar__nav-item::before { content: none; }
 :root[data-design="new"] .sidebar__nav-item:hover:not(:disabled) { background: var(--ln-surface-hover); color: var(--ln-text); }
@@ -173,6 +208,23 @@
 :root[data-design="new"] .sidebar__footer-collapsed { gap: 8px; }
 :root[data-design="new"] .sidebar__collapsed-card,
 :root[data-design="new"] .sidebar__collapsed-back { width: 34px; height: 30px; }
+
+:root[data-design="new"] .server-status__refresh-btn {
+  border-color: var(--ln-line-strong) !important;
+  background: var(--ln-surface-2) !important;
+  color: var(--ln-text) !important;
+}
+:root[data-design="new"] .server-status__refresh-btn:hover:not(:disabled),
+:root[data-design="new"] .server-status__refresh-btn:focus-visible {
+  border-color: var(--ln-accent) !important;
+  background: var(--ln-surface-hover) !important;
+  color: var(--ln-text) !important;
+}
+:root[data-design="new"] .server-status__refresh-btn[aria-busy="true"] {
+  border-color: var(--ln-line) !important;
+  background: var(--ln-surface) !important;
+  color: var(--ln-muted) !important;
+}
 
 :root[data-design="new"] .app-topbar {
   box-sizing: border-box;
