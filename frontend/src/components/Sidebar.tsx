@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BookOpen, ChevronLeft, ChevronRight, ClipboardList, Home, Keyboard, LogOut } from 'lucide-react';
+import { BookOpen, ChevronLeft, ChevronRight, ClipboardList, Home, Keyboard, LogOut, Settings } from 'lucide-react';
 import { useDesign, useTheme } from '../contexts/ThemeContext';
 import { ChoiceChips } from './ChoiceChips';
 import { IconName, UIIcon } from './UIIcon';
 import { API_BASE } from '../api/client';
 
-type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions' | 'telegram';
+type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions' | 'telegram' | 'users';
 
 export interface SidebarNavItem {
   id: TabType;
@@ -23,6 +23,8 @@ interface SidebarProps {
   onOpenLog: () => void;
   mobileOpen: boolean;
   onMobileClose: () => void;
+  canManageUsers?: boolean;
+  onOpenUsers?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -34,6 +36,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenLog,
   mobileOpen,
   onMobileClose,
+  canManageUsers = false,
+  onOpenUsers,
 }) => {
   const { colors, setDesign } = useTheme();
   const design = useDesign();
@@ -52,6 +56,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleHome = () => {
     setActiveTab('dashboard');
+    onMobileClose();
+  };
+
+  const handleOpenUsers = () => {
+    onOpenUsers?.();
     onMobileClose();
   };
 
@@ -143,6 +152,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="sidebar__username" style={{ color: colors.text.primary, fontWeight: 600 }}>
                   {user}
                 </span>
+                {canManageUsers && (
+                  <button
+                    type="button"
+                    className={`sidebar__user-settings${activeTab === 'users' ? ' is-active' : ''}`}
+                    onClick={handleOpenUsers}
+                    aria-label={t('usersAdmin.open')}
+                    title={t('usersAdmin.open')}
+                    aria-current={activeTab === 'users' ? 'page' : undefined}
+                  >
+                    <Settings className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                )}
               </div>
 
               <div className="sidebar__language">
@@ -227,6 +248,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="sidebar__footer-collapsed">
               <div className="sidebar__collapsed-card sidebar__collapsed-card--user" title={user} aria-label={user}>
                 <UIIcon name="user" size={18} />
+                {canManageUsers && (
+                  <button
+                    type="button"
+                    className={`sidebar__user-settings sidebar__user-settings--collapsed${activeTab === 'users' ? ' is-active' : ''}`}
+                    onClick={handleOpenUsers}
+                    aria-label={t('usersAdmin.open')}
+                    title={t('usersAdmin.open')}
+                    aria-current={activeTab === 'users' ? 'page' : undefined}
+                  >
+                    <Settings className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                )}
               </div>
               <button
                 className="sidebar__collapsed-card sidebar__collapsed-card--logout"

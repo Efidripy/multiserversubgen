@@ -14,10 +14,11 @@ interface SelectMenuProps {
   onChange: (value: string | number) => void;
   ariaLabel: string;
   className?: string;
+  disabled?: boolean;
 }
 
 /** Themed replacement for a native <select>: button + listbox popover. */
-export function SelectMenu({ value, options, onChange, ariaLabel, className }: SelectMenuProps) {
+export function SelectMenu({ value, options, onChange, ariaLabel, className, disabled = false }: SelectMenuProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const selected = options.find((option) => option.value === value);
@@ -43,8 +44,9 @@ export function SelectMenu({ value, options, onChange, ariaLabel, className }: S
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
+        disabled={disabled}
         onClick={() => setOpen((previous) => !previous)}
-        className="inline-flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 text-left font-mono text-xs text-slate-200 transition-colors hover:border-cyan-300/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40"
+        className="inline-flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 text-left font-mono text-xs text-slate-200 transition-colors hover:border-cyan-300/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className="truncate">{selected?.label ?? ''}</span>
         <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform', open && 'rotate-180')} aria-hidden="true" />
