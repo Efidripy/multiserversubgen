@@ -81,8 +81,11 @@ class PanelRoleStore:
             row = conn.execute("SELECT note FROM panel_user_notes WHERE username = ?", (username,)).fetchone()
         return row[0] if row else ""
 
-    def set_note(self, username: str, note: str, updated_by: str) -> None:
+    def set_note(self, username: str, note: str, updated_by: str) -> bool:
         with connect(self.db_path) as conn:
+            # Refuse in the same transaction so a late save cannot resurrect a deleted user's note.
+            if conn.execute("SELECT 1 FROM panel_user_blocks WHERE username = ?", (username,)).fetchone():
+                return False
             if note:
                 conn.execute(
                     "INSERT INTO panel_user_notes(username, note, updated_by, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) "
@@ -91,6 +94,7 @@ class PanelRoleStore:
                 )
             else:
                 conn.execute("DELETE FROM panel_user_notes WHERE username = ?", (username,))
+        return True
 
     def delete_role(self, username: str) -> bool:
         with connect(self.db_path) as conn:

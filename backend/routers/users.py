@@ -181,7 +181,8 @@ def build_users_router(
         note = body.note.strip()
         if len(note) > 200:
             raise HTTPException(status_code=422, detail="Note must be at most 200 characters")
-        panel_roles.set_note(username, note, actor)
+        if not panel_roles.set_note(username, note, actor):
+            raise HTTPException(status_code=409, detail="User was removed from the panel")
         return {"username": username, "note": note}
 
     @router.delete("/api/v1/users/{username}/role")

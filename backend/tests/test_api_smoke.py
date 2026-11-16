@@ -1368,6 +1368,7 @@ def test_removed_user_is_blocked_and_note_roundtrip(monkeypatch):
         assert client.delete("/api/v1/users/admin", headers=admin).status_code == 409
         assert client.delete("/api/v1/users/victim", headers=admin).status_code == 200
         assert client.get("/api/v1/users", headers=victim).status_code == 403
+        assert client.put("/api/v1/users/victim/note", json={"note": "late"}, headers=admin).status_code == 409
         payload = client.get("/api/v1/users", headers=admin).json()
         assert "victim" not in {u["username"] for u in payload["users"]}
         assert "victim" in payload["candidates"]
