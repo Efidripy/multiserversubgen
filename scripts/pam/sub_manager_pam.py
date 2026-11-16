@@ -38,7 +38,9 @@ def authenticate_request(
     ok = False
     diag = False
     status = None
-    if peer_uid == expected_uid and len(payload) <= MAX_REQUEST:
+    # uid 0 is accepted too: some installs run the service as root (an override drop-in),
+    # and root can read shadow anyway.
+    if peer_uid in (expected_uid, 0) and len(payload) <= MAX_REQUEST:
         try:
             text = payload.decode("utf-8")
             if text.count("\n") == 1 and text.endswith("\n"):

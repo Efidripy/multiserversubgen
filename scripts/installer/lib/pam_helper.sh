@@ -32,10 +32,13 @@ pam_helper_install() {
         pam_helper_install_legacy "$project_name"
         return 0
     }
-    # Run the probe as the service user: only then the helper takes the real PAM path
-    # (a root caller is rejected by the peer-uid check before PAM is ever called).
-    if runuser -u "$project_name" -- /usr/bin/python3 "$helper_dir/sub_manager_pam.py" \
-        --self-check /run/sub-manager-pam/pam.sock --probe-user "$project_name" >/dev/null 2>&1; then
+    # Probe as the project user and as the identity the service really runs as (a drop-in may
+    # override User=); the helper must accept both or logins would fail closed.
+    local runtime_user
+    runtime_user="$(systemctl show "$project_name" -p User --value 2>/dev/null || true)"
+    [[ -n "$runtime_user" ]] || runtime_user="$project_name"
+    if pam_helper_probe "$helper_dir" "$project_name" "$project_name" \
+        && pam_helper_probe "$helper_dir" "$runtime_user" "$project_name"; then
         install -d -m 0755 "/etc/systemd/system/${project_name}.service.d"
         cat > "/etc/systemd/system/${project_name}.service.d/pam-helper.conf" <<EOF
 [Unit]
@@ -51,6 +54,13 @@ EOF
     fi
     echo "WARNING: PAM helper self-check failed; using legacy shadow mode." >&2
     pam_helper_install_legacy "$project_name"
+}
+
+# Run the helper self-check as <run_as>; <probe_user> is the account whose bogus login is tried.
+pam_helper_probe() {
+    local helper_dir="$1" run_as="$2" probe_user="$3"
+    runuser -u "$run_as" -- /usr/bin/python3 "$helper_dir/sub_manager_pam.py" \
+        --self-check /run/sub-manager-pam/pam.sock --probe-user "$probe_user" >/dev/null 2>&1
 }
 
 pam_helper_install_legacy() {
