@@ -61,8 +61,9 @@ def test_auth_service_uses_socket_and_fails_closed(monkeypatch, tmp_path):
     thread.join(timeout=2)
     server.close()
 
+    # A different user: a successful result for alice is cached across AuthService instances.
     monkeypatch.setenv("PAM_HELPER_SOCKET", str(tmp_path / "missing"))
-    assert AuthService().authenticate("alice", "secret") is False
+    assert AuthService().authenticate("bob", "secret") is False
 
 
 def test_auth_service_keeps_local_pam_path_when_helper_is_unset(monkeypatch):
