@@ -51,6 +51,27 @@ EXPECTED_TRANSFERRED_SIGNATURES.update({
 })
 
 EXPECTED_TRANSFERRED_SIGNATURES.update({
+    'set_node_provisioning_policy': "(self, *, node_id: 'int', provisioning_enabled: 'bool', total_bytes: 'int | str | None', validity_days: 'int | str | None', client_enabled: 'bool | str | None', expected_policy_version: 'int', idempotency_key: 'str', updated_by: 'str', node_is_compatible: 'bool') -> 'NodeProvisioningPolicy'",
+    'list_provisioning_jobs': "(self, *, limit: 'int' = 100) -> 'list[ProvisioningJobStatus]'",
+    'list_provisioning_jobs_page': "(self, *, limit: 'int' = 100, offset: 'int' = 0) -> 'tuple[list[ProvisioningJobStatus], int]'",
+    'clear_terminal_provisioning_history': "(self, *, idempotency_key: 'object', cleared_by: 'object') -> 'int'",
+    'history_overview': "(self) -> 'dict[str, dict[str, int]]'",
+    'history_clear_count': "(self, section: 'str', node_id: 'int | None' = None) -> 'int'",
+    'list_missing_binding_nodes': "(self) -> 'list[dict[str, Any]]'",
+    'list_customer_operations_page': "(self, *, limit: 'int' = 100, offset: 'int' = 0) -> 'tuple[list[CustomerOperationStatus], int]'",
+    'dismissed_operation_ids': "(self, operation_ids: 'list[int]') -> 'set[int]'",
+    'list_bindings_page': "(self, *, management_state: 'str | None' = None, limit: 'int' = 100, offset: 'int' = 0) -> 'tuple[list[dict[str, Any]], int]'",
+    'list_audit_page': "(self, *, limit: 'int' = 100, offset: 'int' = 0) -> 'tuple[list[dict[str, Any]], int]'",
+    'clear_customer_operation_history': "(self, *, idempotency_key: 'object', cleared_by: 'object') -> 'int'",
+    'clear_drift_history': "(self, *, idempotency_key: 'object', cleared_by: 'object') -> 'int'",
+    'forget_all_missing_bindings': "(self, *, node_id: 'int | None', actor: 'object', idempotency_key: 'object') -> 'dict[str, Any]'",
+    'run_history_retention': "(self) -> 'dict[str, int]'",
+    'get_provisioning_job': "(self, job_id: 'int') -> 'ProvisioningJobStatus'",
+    'reschedule_provisioning_job': "(self, *, job_id: 'int', expected_job_version: 'int', idempotency_key: 'str', requested_by: 'str', action: 'str') -> 'ProvisioningRescheduleResult'",
+    'list_node_provisioning_policies': "(self) -> 'list[NodeProvisioningPolicy]'",
+})
+
+EXPECTED_TRANSFERRED_SIGNATURES.update({
     'create_guest_subscription_link': "(self, *, telegram_user_id: 'int', duration_hours: 'int') -> 'TelegramGuestSubscriptionLink'",
     'resolve_guest_subscription_link': "(self, token: 'str') -> 'TelegramGuestSubscriptionLink | None'",
     'get_guest_subscription_link': "(self, *, telegram_user_id: 'int', guest_link_id: 'int') -> 'TelegramGuestSubscriptionLink'",
