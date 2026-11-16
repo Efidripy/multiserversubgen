@@ -23,6 +23,7 @@ from services import telegram_registry_notices as _telegram_registry_notices
 from services import telegram_registry_support as _telegram_registry_support
 from services import telegram_registry_updates as _telegram_registry_updates
 from services import telegram_registry_traffic as _telegram_registry_traffic
+from services import telegram_registry_drafts as _telegram_registry_drafts
 from services.db_bootstrap import connect
 from services.telegram_access import SUSPENDED_STATUSES
 
@@ -1112,78 +1113,29 @@ class TelegramRegistry:
         page: int = 0,
         value: str | None = None,
     ) -> TelegramAdminDraft:
-        """Persist only bounded command context; never store user application text."""
-
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        if action not in {
-            "new_customer_name", "existing_customer_email", "delete_customer_confirmation",
-        }:
-            raise TelegramRegistryError("admin draft action is invalid")
-        target_user = _positive_int(telegram_user_id, "telegram_user_id") if telegram_user_id is not None else None
-        target_customer = _positive_int(customer_id, "customer_id") if customer_id is not None else None
-        expected_version = _positive_int(expected_row_version, "expected_row_version") if expected_row_version is not None else None
-        if isinstance(page, bool) or not isinstance(page, int) or page < 0:
-            raise TelegramRegistryError("admin draft page is invalid")
-        normalized_value = value.strip() if isinstance(value, str) else None
-        if normalized_value == "":
-            normalized_value = None
-        if normalized_value is not None and len(normalized_value) > 128:
-            raise TelegramRegistryError("admin draft value is too long")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO telegram_admin_drafts
-                    (admin_telegram_user_id, action, telegram_user_id, customer_id,
-                     expected_row_version, page, value)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
-                    action = excluded.action,
-                    telegram_user_id = excluded.telegram_user_id,
-                    customer_id = excluded.customer_id,
-                    expected_row_version = excluded.expected_row_version,
-                    page = excluded.page,
-                    value = excluded.value,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (admin_id, action, target_user, target_customer, expected_version, page, normalized_value),
-            )
-        return TelegramAdminDraft(
-            admin_telegram_user_id=admin_id,
+        return _telegram_registry_drafts.set_admin_draft(
+            self,
+            admin_telegram_user_id=admin_telegram_user_id,
             action=action,
-            telegram_user_id=target_user,
-            customer_id=target_customer,
-            expected_row_version=expected_version,
+            telegram_user_id=telegram_user_id,
+            customer_id=customer_id,
+            expected_row_version=expected_row_version,
             page=page,
-            value=normalized_value,
+            value=value,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            admin_draft_type=TelegramAdminDraft,
         )
 
     def get_admin_draft(self, admin_telegram_user_id: int) -> TelegramAdminDraft | None:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT admin_telegram_user_id, action, telegram_user_id, customer_id,
-                       expected_row_version, page, value
-                FROM telegram_admin_drafts WHERE admin_telegram_user_id = ?
-                """,
-                (admin_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return TelegramAdminDraft(
-            admin_telegram_user_id=int(row[0]), action=str(row[1]),
-            telegram_user_id=int(row[2]) if row[2] is not None else None,
-            customer_id=int(row[3]) if row[3] is not None else None,
-            expected_row_version=int(row[4]) if row[4] is not None else None,
-            page=int(row[5]), value=str(row[6]) if row[6] is not None else None,
+        return _telegram_registry_drafts.get_admin_draft(
+            self, admin_telegram_user_id, positive_int=_positive_int, admin_draft_type=TelegramAdminDraft
         )
 
     def clear_admin_draft(self, admin_telegram_user_id: int) -> None:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                "DELETE FROM telegram_admin_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
-            )
+        return _telegram_registry_drafts.clear_admin_draft(
+            self, admin_telegram_user_id, positive_int=_positive_int
+        )
 
     def set_admin_message_draft(
         self,
@@ -1196,120 +1148,55 @@ class TelegramRegistry:
         photo_file_ids: tuple[str, ...] | None = None,
         media_group_id: str | None = None,
     ) -> TelegramAdminMessageDraft:
-        """Store only the owner's bounded, confirmation-gated composition."""
-
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        if mode not in {"direct", "broadcast"}:
-            raise TelegramRegistryError("admin message draft mode is invalid")
-        target_customer = _positive_int(customer_id, "customer_id") if customer_id is not None else None
-        if mode == "direct" and target_customer is None:
-            raise TelegramRegistryError("direct message target is required")
-        if mode == "broadcast" and target_customer is not None:
-            raise TelegramRegistryError("broadcast cannot target one customer")
-        if isinstance(page, bool) or not isinstance(page, int) or page < 0:
-            raise TelegramRegistryError("admin message draft page is invalid")
-        normalized_body = _normalize_admin_message_body(body) if body is not None else None
-        if photo_file_ids and (len(photo_file_ids) > 10 or
-                               any(not isinstance(item, str) or not item for item in photo_file_ids) or
-                               (normalized_body is not None and len(normalized_body) > 1024)):
-            raise TelegramRegistryError("invalid broadcast photos")
-        photos_json = json.dumps(photo_file_ids, ensure_ascii=False) if photo_file_ids else None
-        with connect(self._db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO telegram_admin_message_drafts
-                    (admin_telegram_user_id, mode, customer_id, page, body, photo_file_ids, media_group_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
-                    mode = excluded.mode,
-                    customer_id = excluded.customer_id,
-                    page = excluded.page,
-                    body = excluded.body,
-                    photo_file_ids = excluded.photo_file_ids,
-                    media_group_id = excluded.media_group_id,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (admin_id, mode, target_customer, page, normalized_body, photos_json, media_group_id),
-            )
-        return TelegramAdminMessageDraft(admin_id, mode, target_customer, page, normalized_body, photo_file_ids, media_group_id)
+        return _telegram_registry_drafts.set_admin_message_draft(
+            self,
+            admin_telegram_user_id=admin_telegram_user_id,
+            mode=mode,
+            customer_id=customer_id,
+            page=page,
+            body=body,
+            photo_file_ids=photo_file_ids,
+            media_group_id=media_group_id,
+            positive_int=_positive_int,
+            normalize_admin_message_body=_normalize_admin_message_body,
+            error_type=TelegramRegistryError,
+            admin_message_draft_type=TelegramAdminMessageDraft,
+        )
 
     def get_admin_message_draft(self, admin_telegram_user_id: int) -> TelegramAdminMessageDraft | None:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT admin_telegram_user_id, mode, customer_id, page, body, photo_file_ids, media_group_id
-                FROM telegram_admin_message_drafts
-                WHERE admin_telegram_user_id = ?
-                """,
-                (admin_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return TelegramAdminMessageDraft(
-            admin_telegram_user_id=int(row[0]), mode=str(row[1]),
-            customer_id=int(row[2]) if row[2] is not None else None,
-            page=int(row[3]), body=str(row[4]) if row[4] is not None else None,
-            photo_file_ids=tuple(json.loads(row[5])) if row[5] else None,
-            media_group_id=str(row[6]) if row[6] is not None else None,
+        return _telegram_registry_drafts.get_admin_message_draft(
+            self, admin_telegram_user_id, positive_int=_positive_int,
+            admin_message_draft_type=TelegramAdminMessageDraft,
         )
 
     def clear_admin_message_draft(self, admin_telegram_user_id: int) -> None:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                "DELETE FROM telegram_admin_message_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
-            )
+        return _telegram_registry_drafts.clear_admin_message_draft(
+            self, admin_telegram_user_id, positive_int=_positive_int
+        )
 
     def set_customer_note_draft(
         self, *, admin_telegram_user_id: int, customer_id: int, page: int
     ) -> TelegramCustomerNoteDraft:
-        """Persist note-entry destination only; the note text is not staged."""
-
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        local_customer_id = _positive_int(customer_id, "customer_id")
-        if isinstance(page, bool) or not isinstance(page, int) or page < 0:
-            raise TelegramRegistryError("admin draft page is invalid")
-        with connect(self._db_path) as conn:
-            customer_exists = conn.execute(
-                "SELECT 1 FROM customers WHERE id = ?", (local_customer_id,)
-            ).fetchone()
-            if customer_exists is None:
-                raise TelegramRegistryError("customer was not found")
-            conn.execute(
-                """
-                INSERT INTO telegram_customer_note_drafts (admin_telegram_user_id, customer_id, page)
-                VALUES (?, ?, ?)
-                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
-                    customer_id = excluded.customer_id,
-                    page = excluded.page,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (admin_id, local_customer_id, page),
-            )
-        return TelegramCustomerNoteDraft(admin_id, local_customer_id, page)
+        return _telegram_registry_drafts.set_customer_note_draft(
+            self,
+            admin_telegram_user_id=admin_telegram_user_id,
+            customer_id=customer_id,
+            page=page,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            customer_note_draft_type=TelegramCustomerNoteDraft,
+        )
 
     def get_customer_note_draft(self, admin_telegram_user_id: int) -> TelegramCustomerNoteDraft | None:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT customer_id, page
-                FROM telegram_customer_note_drafts
-                WHERE admin_telegram_user_id = ?
-                """,
-                (admin_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return TelegramCustomerNoteDraft(admin_id, int(row[0]), int(row[1]))
+        return _telegram_registry_drafts.get_customer_note_draft(
+            self, admin_telegram_user_id, positive_int=_positive_int,
+            customer_note_draft_type=TelegramCustomerNoteDraft,
+        )
 
     def clear_customer_note_draft(self, admin_telegram_user_id: int) -> None:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                "DELETE FROM telegram_customer_note_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
-            )
+        return _telegram_registry_drafts.clear_customer_note_draft(
+            self, admin_telegram_user_id, positive_int=_positive_int
+        )
 
     def set_support_reply_draft(
         self,
@@ -1321,73 +1208,30 @@ class TelegramRegistry:
         page: int,
         body: str | None = None,
     ) -> TelegramSupportReplyDraft:
-        """Persist a bounded admin reply only after proving the ticket is still unresolved."""
-
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        request_id = _positive_int(support_request_id, "support_request_id")
-        local_customer_id = _positive_int(customer_id, "customer_id")
-        expected_version = _positive_int(expected_row_version, "expected_row_version")
-        if isinstance(page, bool) or not isinstance(page, int) or page < 0:
-            raise TelegramRegistryError("admin draft page is invalid")
-        normalized_body = body.strip() if isinstance(body, str) else None
-        if normalized_body == "":
-            raise TelegramRegistryError("support response must contain 1 to 1000 characters")
-        if normalized_body is not None and not 1 <= len(normalized_body) <= 1000:
-            raise TelegramRegistryError("support response must contain 1 to 1000 characters")
-        with connect(self._db_path) as conn:
-            ticket = conn.execute(
-                "SELECT customer_id, status, row_version FROM telegram_support_requests WHERE id = ?",
-                (request_id,),
-            ).fetchone()
-            if (
-                ticket is None
-                or int(ticket[0]) != local_customer_id
-                or str(ticket[1]) not in {"open", "read"}
-                or int(ticket[2]) != expected_version
-            ):
-                raise VersionConflictError("support request was updated by another administrator")
-            conn.execute(
-                """
-                INSERT INTO telegram_support_reply_drafts
-                    (admin_telegram_user_id, support_request_id, customer_id, expected_row_version, page, body)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
-                    support_request_id = excluded.support_request_id,
-                    customer_id = excluded.customer_id,
-                    expected_row_version = excluded.expected_row_version,
-                    page = excluded.page,
-                    body = excluded.body,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (admin_id, request_id, local_customer_id, expected_version, page, normalized_body),
-            )
-        return TelegramSupportReplyDraft(
-            admin_id, request_id, local_customer_id, expected_version, page, normalized_body
+        return _telegram_registry_drafts.set_support_reply_draft(
+            self,
+            admin_telegram_user_id=admin_telegram_user_id,
+            support_request_id=support_request_id,
+            customer_id=customer_id,
+            expected_row_version=expected_row_version,
+            page=page,
+            body=body,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            version_conflict_type=VersionConflictError,
+            support_reply_draft_type=TelegramSupportReplyDraft,
         )
 
     def get_support_reply_draft(self, admin_telegram_user_id: int) -> TelegramSupportReplyDraft | None:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT support_request_id, customer_id, expected_row_version, page, body
-                FROM telegram_support_reply_drafts WHERE admin_telegram_user_id = ?
-                """,
-                (admin_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return TelegramSupportReplyDraft(
-            admin_id, int(row[0]), int(row[1]), int(row[2]), int(row[3]),
-            str(row[4]) if row[4] is not None else None,
+        return _telegram_registry_drafts.get_support_reply_draft(
+            self, admin_telegram_user_id, positive_int=_positive_int,
+            support_reply_draft_type=TelegramSupportReplyDraft,
         )
 
     def clear_support_reply_draft(self, admin_telegram_user_id: int) -> None:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                "DELETE FROM telegram_support_reply_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
-            )
+        return _telegram_registry_drafts.clear_support_reply_draft(
+            self, admin_telegram_user_id, positive_int=_positive_int
+        )
 
     def get_customer_by_email(self, email: str) -> CustomerListItem:
         """Resolve one live customer by canonical exact email, without fuzzy matching."""
@@ -2775,38 +2619,23 @@ class TelegramRegistry:
     def set_subscription_device_draft(
         self, *, telegram_user_id: int, subscription_device_id: int
     ) -> None:
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        device = self.get_subscription_device(
-            telegram_user_id=user_id, subscription_device_id=subscription_device_id
+        return _telegram_registry_drafts.set_subscription_device_draft(
+            self,
+            telegram_user_id=telegram_user_id,
+            subscription_device_id=subscription_device_id,
+            positive_int=_positive_int,
+            get_subscription_device=self.get_subscription_device,
         )
-        with connect(self._db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO telegram_subscription_device_drafts (telegram_user_id, subscription_device_id)
-                VALUES (?, ?)
-                ON CONFLICT(telegram_user_id) DO UPDATE SET
-                    subscription_device_id = excluded.subscription_device_id,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id, device.device_id),
-            )
 
     def get_subscription_device_draft(self, telegram_user_id: int) -> int | None:
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                "SELECT subscription_device_id FROM telegram_subscription_device_drafts "
-                "WHERE telegram_user_id = ?",
-                (user_id,),
-            ).fetchone()
-        return int(row[0]) if row is not None else None
+        return _telegram_registry_drafts.get_subscription_device_draft(
+            self, telegram_user_id, positive_int=_positive_int
+        )
 
     def clear_subscription_device_draft(self, telegram_user_id: int) -> None:
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                "DELETE FROM telegram_subscription_device_drafts WHERE telegram_user_id = ?", (user_id,)
-            )
+        return _telegram_registry_drafts.clear_subscription_device_draft(
+            self, telegram_user_id, positive_int=_positive_int
+        )
 
     def revoke_subscription_device(self, *, telegram_user_id: int, subscription_device_id: int) -> None:
         """Soft-revoke one owned device link while preserving the audit trail."""
@@ -2882,37 +2711,24 @@ class TelegramRegistry:
         return devices[local_device_id]
 
     def set_logical_device_draft(self, *, telegram_user_id: int, device_id: int) -> None:
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        local_device_id = _positive_int(device_id, "device_id")
-        with connect(self._db_path) as conn:
-            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
-            if conn.execute(
-                "SELECT 1 FROM telegram_logical_devices WHERE id = ? AND customer_id = ?",
-                (local_device_id, customer_id),
-            ).fetchone() is None:
-                raise TelegramRegistryError("logical device was not found")
-            conn.execute(
-                """
-                INSERT INTO telegram_logical_device_drafts (telegram_user_id, device_id)
-                VALUES (?, ?)
-                ON CONFLICT(telegram_user_id) DO UPDATE SET
-                    device_id = excluded.device_id, updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id, local_device_id),
-            )
+        return _telegram_registry_drafts.set_logical_device_draft(
+            self,
+            telegram_user_id=telegram_user_id,
+            device_id=device_id,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            active_telegram_customer=self._active_telegram_customer,
+        )
 
     def get_logical_device_draft(self, telegram_user_id: int) -> int | None:
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                "SELECT device_id FROM telegram_logical_device_drafts WHERE telegram_user_id = ?", (user_id,)
-            ).fetchone()
-        return int(row[0]) if row is not None else None
+        return _telegram_registry_drafts.get_logical_device_draft(
+            self, telegram_user_id, positive_int=_positive_int
+        )
 
     def clear_logical_device_draft(self, telegram_user_id: int) -> None:
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        with connect(self._db_path) as conn:
-            conn.execute("DELETE FROM telegram_logical_device_drafts WHERE telegram_user_id = ?", (user_id,))
+        return _telegram_registry_drafts.clear_logical_device_draft(
+            self, telegram_user_id, positive_int=_positive_int
+        )
 
     def revoke_guest_subscription_link(self, *, telegram_user_id: int, guest_link_id: int) -> None:
         user_id = _positive_int(telegram_user_id, "telegram_user_id")
@@ -3140,9 +2956,9 @@ class TelegramRegistry:
         )
 
     def clear_support_draft(self, telegram_user_id: int) -> None:
-        user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        with connect(self._db_path) as conn:
-            conn.execute("DELETE FROM telegram_user_drafts WHERE telegram_user_id = ?", (user_id,))
+        return _telegram_registry_drafts.clear_support_draft(
+            self, telegram_user_id, positive_int=_positive_int
+        )
 
     def list_support_requests(self, *, status: str = "open", limit: int = 100) -> list[TelegramSupportRequest]:
         return _telegram_registry_support.list_support_requests(
@@ -3219,46 +3035,26 @@ class TelegramRegistry:
     def set_service_notice_draft(
         self, *, admin_telegram_user_id: int, expected_row_version: int
     ) -> TelegramServiceNoticeDraft:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        if isinstance(expected_row_version, bool) or not isinstance(expected_row_version, int) or expected_row_version < 0:
-            raise TelegramRegistryError("service notice version is invalid")
-        with connect(self._db_path) as conn:
-            if conn.execute(
-                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (admin_id,)
-            ).fetchone() is None:
-                raise TelegramRegistryError("Telegram identity was not found")
-            current = conn.execute(
-                "SELECT row_version FROM telegram_service_notice WHERE id = 1"
-            ).fetchone()
-            current_version = int(current[0]) if current is not None else 0
-            if current_version != expected_row_version:
-                raise VersionConflictError("service notice was updated by another administrator")
-            conn.execute(
-                """
-                INSERT INTO telegram_service_notice_drafts (admin_telegram_user_id, expected_row_version)
-                VALUES (?, ?)
-                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
-                    expected_row_version = excluded.expected_row_version, updated_at = CURRENT_TIMESTAMP
-                """,
-                (admin_id, expected_row_version),
-            )
-        return TelegramServiceNoticeDraft(admin_id, expected_row_version)
+        return _telegram_registry_drafts.set_service_notice_draft(
+            self,
+            admin_telegram_user_id=admin_telegram_user_id,
+            expected_row_version=expected_row_version,
+            positive_int=_positive_int,
+            error_type=TelegramRegistryError,
+            version_conflict_type=VersionConflictError,
+            service_notice_draft_type=TelegramServiceNoticeDraft,
+        )
 
     def get_service_notice_draft(self, admin_telegram_user_id: int) -> TelegramServiceNoticeDraft | None:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        with connect(self._db_path) as conn:
-            row = conn.execute(
-                "SELECT expected_row_version FROM telegram_service_notice_drafts WHERE admin_telegram_user_id = ?",
-                (admin_id,),
-            ).fetchone()
-        return TelegramServiceNoticeDraft(admin_id, int(row[0])) if row is not None else None
+        return _telegram_registry_drafts.get_service_notice_draft(
+            self, admin_telegram_user_id, positive_int=_positive_int,
+            service_notice_draft_type=TelegramServiceNoticeDraft,
+        )
 
     def clear_service_notice_draft(self, admin_telegram_user_id: int) -> None:
-        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
-        with connect(self._db_path) as conn:
-            conn.execute(
-                "DELETE FROM telegram_service_notice_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
-            )
+        return _telegram_registry_drafts.clear_service_notice_draft(
+            self, admin_telegram_user_id, positive_int=_positive_int
+        )
 
     def create_customer(
         self,
