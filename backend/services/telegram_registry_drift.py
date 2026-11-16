@@ -180,6 +180,8 @@ def record_drift_findings(self, *, scanned_node_ids: object, findings: object, e
                                       ELSE telegram_drift_findings.status END,
                         resolved_at = CASE WHEN telegram_drift_findings.status IN ('resolved', 'adopted') THEN NULL
                                            ELSE telegram_drift_findings.resolved_at END,
+                        hidden_at = CASE WHEN telegram_drift_findings.status IN ('resolved', 'adopted') THEN NULL
+                                         ELSE telegram_drift_findings.hidden_at END,
                         row_version = telegram_drift_findings.row_version + 1
                     """,
                     item,

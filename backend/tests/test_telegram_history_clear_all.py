@@ -310,3 +310,22 @@ def test_history_filters_paginate_more_than_two_hundred_rows(tmp_path):
     ):
         with pytest.raises(TelegramRegistryError):
             call()
+
+
+def test_rescan_reopens_and_unhides_a_resolved_hidden_finding(tmp_path):
+    registry, path = _registry(tmp_path)
+    payload = {
+        "kind": "orphan_remote", "customer_id": None, "node_id": 1,
+        "remote_email": "orphan-user", "remote_client_id": "remote-client", "remote_sub_id": "remote-sub",
+    }
+    first = registry.record_drift_findings(scanned_node_ids=[1], findings=[payload])
+    registry.resolve_drift_finding(
+        finding_id=first[0].finding_id, expected_row_version=first[0].row_version, status="resolved", resolved_by="admin",
+    )
+    with connect(path) as conn:
+        conn.execute("UPDATE telegram_drift_findings SET hidden_at = CURRENT_TIMESTAMP")
+
+    registry.record_drift_findings(scanned_node_ids=[1], findings=[payload])
+
+    items, total = registry.list_drift_page(status="open")
+    assert total == 1 and items[0].status == "open"
