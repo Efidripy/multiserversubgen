@@ -15,6 +15,7 @@ from routers.server_ops import build_server_ops_router
 from routers.subscriptions import build_subscriptions_router
 from routers.telegram_admin import build_telegram_admin_router
 from routers.telegram_webhook import build_telegram_webhook_router
+from routers.users import build_users_router
 from services.telegram_drift import TelegramDriftScanner
 from services.telegram_provisioning import ClientManagerLegacyDiscovery
 from services.telegram_registry import TelegramRegistry
@@ -111,6 +112,11 @@ def register_app_routers(
     get_system_emails=None,
     subscription_profile_update_interval_hours=None,
     subscription_profile_title=None,
+    panel_roles=None,
+    role_admins=None,
+    role_operators=None,
+    role_owners=None,
+    enqueue_audit_event=None,
 ):
     _install_node_duplicate_startup_check(snapshot_collector, db_path, logger)
     app.include_router(
@@ -132,6 +138,17 @@ def register_app_routers(
             web_path=web_path,
             mfa_totp_enabled=mfa_totp_enabled,
             monitoring_enabled=monitoring_enabled,
+        )
+    )
+    app.include_router(
+        build_users_router(
+            check_auth=check_auth,
+            get_user_role=get_user_role,
+            panel_roles=panel_roles,
+            role_admins=role_admins or set(),
+            role_operators=role_operators or set(),
+            role_owners=role_owners or set(),
+            enqueue_audit_event=enqueue_audit_event or (lambda _event: None),
         )
     )
     app.include_router(

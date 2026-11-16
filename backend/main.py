@@ -34,6 +34,7 @@ from services.db_bootstrap import (
     initialize_databases,
     sync_node_history_names_with_nodes as sync_node_history_names_with_nodes_db,
 )
+from services.panel_roles import PanelRoleStore
 from services.node_access import get_node_or_404
 from core.app_runtime_bundle import build_app_runtime_bundle
 from core.router_registration import register_app_routers
@@ -130,6 +131,7 @@ GRAFANA_URL = SETTINGS.grafana_url
 PROMETHEUS_BASIC_AUTH = SETTINGS.prometheus_basic_auth
 LOKI_BASIC_AUTH = SETTINGS.loki_basic_auth
 GRAFANA_BASIC_AUTH = SETTINGS.grafana_basic_auth
+DB_PATH = os.path.join(PROJECT_DIR, "admin.db")
 
 REQUESTS_VERIFY = get_requests_verify_value(
     verify_tls=VERIFY_TLS, ca_bundle_path=CA_BUNDLE_PATH
@@ -137,13 +139,16 @@ REQUESTS_VERIFY = get_requests_verify_value(
 if REQUESTS_VERIFY is False:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+panel_roles = PanelRoleStore(DB_PATH)
 auth_service = AuthService(
     role_operators=ROLE_OPERATORS,
     role_admins=ROLE_ADMINS,
     ws_auth_secret=WS_AUTH_SECRET,
     mfa_totp_enabled=MFA_TOTP_ENABLED,
     mfa_totp_users=MFA_TOTP_USERS,
+    role_lookup=panel_roles.get_role,
 )
+panel_roles.set_on_change(auth_service.invalidate_role_cache)
 
 _docs_enabled = os.getenv("ENABLE_API_DOCS", "").strip().lower() in {"1", "true", "yes", "on"}
 app = FastAPI(
@@ -165,7 +170,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-DB_PATH = os.path.join(PROJECT_DIR, "admin.db")
 subscription_remote_rules_refresher = RemoteRulesRefresher(
     DB_PATH, lambda: load_subscription_settings(DB_PATH)
 )
@@ -556,6 +560,11 @@ register_app_routers(
     telegram_settings=SETTINGS.telegram,
     telegram_token_provider=telegram_token_provider,
     is_owner=lambda username: username in ROLE_OWNERS,
+    panel_roles=panel_roles,
+    role_admins=ROLE_ADMINS,
+    role_operators=ROLE_OPERATORS,
+    role_owners=ROLE_OWNERS,
+    enqueue_audit_event=enqueue_audit_event,
 )
 
 

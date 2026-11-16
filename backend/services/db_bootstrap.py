@@ -146,6 +146,13 @@ def init_db(db_path: str) -> None:
                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS panel_user_roles
+                     (username TEXT PRIMARY KEY,
+                      role TEXT NOT NULL CHECK(role IN ('viewer','operator','admin')),
+                      updated_by TEXT NOT NULL,
+                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS nodes
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       name TEXT,

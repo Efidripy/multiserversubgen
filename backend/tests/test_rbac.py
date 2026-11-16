@@ -35,6 +35,8 @@ def test_required_role_policy():
     assert main._required_role_for_request("POST", "/api/v1/subscription-tokens/email/D632-IOS/regenerate") == "admin"
     assert main._required_role_for_request("GET", "/api/v1/telegram/node-policies") == "admin"
     assert main._required_role_for_request("PUT", "/api/v1/telegram/node-policies/1") == "admin"
+    assert main._required_role_for_request("GET", "/api/v1/users") == "admin"
+    assert main._required_role_for_request("PUT", "/api/v1/users/alice/role") == "admin"
 
 
 @pytest.mark.parametrize(
