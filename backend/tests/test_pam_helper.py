@@ -122,4 +122,4 @@ def test_root_peer_is_accepted_for_installs_that_run_the_service_as_root():
 def test_installer_probes_the_effective_runtime_user():
     script = (REPO / "scripts/installer/lib/pam_helper.sh").read_text(encoding="utf-8")
     assert "systemctl show \"$project_name\" -p User --value" in script
-    assert script.count("pam_helper_probe ") >= 3  # definition + project user + runtime user
+    assert script.count("pam_helper_probe ") >= 2  # project user + runtime user
