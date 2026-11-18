@@ -84,6 +84,16 @@ def get_link_inbound_remark(link: str) -> str:
         return _link_inbound_remarks.get(link, "")
 
 
+def _prune_link_metadata() -> None:
+    """Bound the per-link maps without dropping links a cached entry still serves (call under _cache_lock)."""
+    if len(_link_inbound_remarks) <= LINKS_CACHE_MAX_ENTRIES:
+        return
+    live = {link for _, cached in links_cache.values() for link in cached}
+    for key in [key for key in _link_inbound_remarks if key not in live]:
+        _link_inbound_remarks.pop(key, None)
+        _link_node_ids.pop(key, None)
+
+
 def get_link_node_id(link: str):
     """Return the node id a generated link belongs to, if known."""
     with _cache_lock:
@@ -556,11 +566,7 @@ def get_links_filtered(
     with _cache_lock:
         _prune_links_cache(now_link)
         links_cache[cache_key] = (now_link, links)
-        if len(_link_inbound_remarks) > LINKS_CACHE_MAX_ENTRIES:
-            # Keep the auxiliary mapping bounded alongside the link cache.
-            for key in list(_link_inbound_remarks)[: len(_link_inbound_remarks) - LINKS_CACHE_MAX_ENTRIES]:
-                _link_inbound_remarks.pop(key, None)
-                _link_node_ids.pop(key, None)
+        _prune_link_metadata()
     return links
 
 
