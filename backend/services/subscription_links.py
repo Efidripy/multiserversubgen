@@ -19,6 +19,7 @@ CACHE_TTL = int(os.getenv("CACHE_TTL", "30"))
 LINKS_CACHE_MAX_ENTRIES = int(os.getenv("SUBSCRIPTION_LINKS_CACHE_MAX_ENTRIES", "2048"))
 
 _SNAPSHOT_DB_PATH: Optional[str] = None
+_LIVE_SNAPSHOT = None
 _CLIENT_MANAGER = None
 _cache_lock = Lock()
 
@@ -32,6 +33,12 @@ _link_node_ids = {}
 def configure_snapshot_db(db_path: str) -> None:
     global _SNAPSHOT_DB_PATH
     _SNAPSHOT_DB_PATH = db_path
+
+
+def configure_availability_source(latest_snapshot) -> None:
+    """Live collector view: timeouts are kept in memory only, never written to SQLite."""
+    global _LIVE_SNAPSHOT
+    _LIVE_SNAPSHOT = latest_snapshot
 
 
 def configure_client_manager(client_manager) -> None:
@@ -101,15 +108,22 @@ def get_link_node_id(link: str):
 
 
 def get_offline_node_ids() -> set:
-    """Ids of nodes whose latest collector snapshot says the panel is unreachable."""
-    if not _SNAPSHOT_DB_PATH:
-        return set()
-    try:
-        with connect(_SNAPSHOT_DB_PATH) as conn:
-            return {int(row[0]) for row in conn.execute("SELECT node_id FROM node_snapshots WHERE is_online = 0")}
-    except sqlite3.Error as exc:
-        logger.debug("Failed to read offline nodes: %s", exc)
-        return set()
+    """Ids of nodes the collector currently reports as unreachable (live view plus SQLite)."""
+    offline: set = set()
+    if _LIVE_SNAPSHOT is not None:
+        try:
+            for item in _LIVE_SNAPSHOT().get("nodes", []):
+                if isinstance(item, dict) and item.get("available") is False and item.get("node_id") is not None:
+                    offline.add(int(item["node_id"]))
+        except (TypeError, ValueError) as exc:
+            logger.debug("Failed to read live node availability: %s", exc)
+    if _SNAPSHOT_DB_PATH:
+        try:
+            with connect(_SNAPSHOT_DB_PATH) as conn:
+                offline.update(int(row[0]) for row in conn.execute("SELECT node_id FROM node_snapshots WHERE is_online = 0"))
+        except sqlite3.Error as exc:
+            logger.debug("Failed to read offline nodes: %s", exc)
+    return offline
 
 
 def _prune_links_cache(now: float) -> None:

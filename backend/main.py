@@ -477,6 +477,7 @@ def check_web_session(request: Request):
     db_path=DB_PATH,
     client_manager=client_mgr,
 )
+subscription_links_service.configure_availability_source(snapshot_collector.latest_snapshot)
 subscription_refresh_window = subscription_links_service.SubscriptionRefreshWindow(invalidate_subscription_cache)
 get_subscription_userinfo = subscription_links_service.get_subscription_userinfo
 get_system_emails = subscription_links_service.get_system_emails

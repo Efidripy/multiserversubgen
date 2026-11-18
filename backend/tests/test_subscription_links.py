@@ -19,6 +19,18 @@ def test_offline_node_ids_come_from_the_collector_snapshot(tmp_path):
         subscription_links._SNAPSHOT_DB_PATH = previous
 
 
+def test_offline_node_ids_include_in_memory_timeouts(monkeypatch):
+    from services import subscription_links as sl
+
+    monkeypatch.setattr(sl, "_SNAPSHOT_DB_PATH", None)
+    monkeypatch.setattr(
+        sl,
+        "_LIVE_SNAPSHOT",
+        lambda: {"nodes": [{"node_id": 7, "available": False}, {"node_id": 8, "available": True}, {"name": "x", "available": False}]},
+    )
+    assert sl.get_offline_node_ids() == {7}
+
+
 def test_link_metadata_survives_pruning_while_the_link_is_cached(monkeypatch):
     from services import subscription_links as sl
 
