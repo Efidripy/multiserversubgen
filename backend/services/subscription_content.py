@@ -104,7 +104,7 @@ def render_tokens(template: str, ctx: dict, link: dict | None = None) -> str:
         "DAYS_LEFT": str(days_left),
         "EXPIRE_DATE": expire_date,
         "STATUS": str(status),
-        "STATUS_EMOJI": _EMOJI.get(status, ""),
+        "STATUS_EMOJI": "❌" if details.get("node_down") and status == "active" else _EMOJI.get(status, ""),
     }
     result = str(template or "")
     for key, value in values.items():
@@ -142,6 +142,7 @@ def apply_content(
     now: float,
     shuffle=None,
     inbound_remark=None,
+    node_down=None,
 ) -> list[str]:
     section = section or {}
     if not section or not any(section.get(key) for key in ("expired_template", "depleted_template", "remark_template", "show_identity_on_all_links", "host_order", "info_node")):
@@ -166,6 +167,9 @@ def apply_content(
             if inbound_remark is not None and isinstance(details, dict):
                 details = dict(details)
                 details["inbound"] = inbound_remark(raw)
+            if node_down is not None and node_down(raw):
+                details = dict(details)
+                details["node_down"] = True
             name = render_tokens(str(remark_template), local_ctx, details)
             renamed.append(_replace_name(raw, name))
         result = renamed

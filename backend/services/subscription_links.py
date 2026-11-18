@@ -26,6 +26,7 @@ emails_cache = {"ts": 0.0, "emails": [], "items": {}}
 links_cache = {}
 _inbounds_cache = {}
 _link_inbound_remarks = {}
+_link_node_ids = {}
 
 
 def configure_snapshot_db(db_path: str) -> None:
@@ -47,6 +48,7 @@ def invalidate_subscription_cache() -> None:
         links_cache.clear()
         _inbounds_cache.clear()
         _link_inbound_remarks.clear()
+        _link_node_ids.clear()
 
 
 class SubscriptionRefreshWindow:
@@ -80,6 +82,24 @@ def get_link_inbound_remark(link: str) -> str:
     """Return the inbound remark associated with a generated link."""
     with _cache_lock:
         return _link_inbound_remarks.get(link, "")
+
+
+def get_link_node_id(link: str):
+    """Return the node id a generated link belongs to, if known."""
+    with _cache_lock:
+        return _link_node_ids.get(link)
+
+
+def get_offline_node_ids() -> set:
+    """Ids of nodes whose latest collector snapshot says the panel is unreachable."""
+    if not _SNAPSHOT_DB_PATH:
+        return set()
+    try:
+        with connect(_SNAPSHOT_DB_PATH) as conn:
+            return {int(row[0]) for row in conn.execute("SELECT node_id FROM node_snapshots WHERE is_online = 0")}
+    except sqlite3.Error as exc:
+        logger.debug("Failed to read offline nodes: %s", exc)
+        return set()
 
 
 def _prune_links_cache(now: float) -> None:
@@ -462,6 +482,7 @@ def get_links_filtered(
                     link = _append_transport_query(link, network, transport)
                     links.append(link)
                     _link_inbound_remarks[link] = str(inbound.get("remark") or "")
+                    _link_node_ids[link] = node.get("id")
                     continue
 
                 if protocol == "vmess":
@@ -498,6 +519,7 @@ def get_links_filtered(
                     link = "vmess://" + base64.b64encode(json.dumps(link_obj).encode()).decode()
                     links.append(link)
                     _link_inbound_remarks[link] = str(inbound.get("remark") or "")
+                    _link_node_ids[link] = node.get("id")
                     continue
 
                 if protocol == "trojan":
@@ -529,6 +551,7 @@ def get_links_filtered(
                     link = _append_transport_query(link, network, transport)
                     links.append(link)
                     _link_inbound_remarks[link] = str(inbound.get("remark") or "")
+                    _link_node_ids[link] = node.get("id")
 
     with _cache_lock:
         _prune_links_cache(now_link)
@@ -537,6 +560,7 @@ def get_links_filtered(
             # Keep the auxiliary mapping bounded alongside the link cache.
             for key in list(_link_inbound_remarks)[: len(_link_inbound_remarks) - LINKS_CACHE_MAX_ENTRIES]:
                 _link_inbound_remarks.pop(key, None)
+                _link_node_ids.pop(key, None)
     return links
 
 

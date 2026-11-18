@@ -64,3 +64,23 @@ def test_vmess_reality_name_and_protocol_fallback_to_link():
     }
     link = "vmess://" + base64.b64encode(json.dumps(payload).encode()).decode()
     assert render_tokens("{{NODE}}/{{PROTOCOL}}", {"email": "user@example.com"}, link) == "Reality/vmess"
+
+
+def test_offline_node_gets_red_cross_instead_of_green_check():
+    ctx = {"email": "u@example.com", "total": 0, "now": 1000}
+    section = {"remark_template": "{{NODE}} {{STATUS_EMOJI}}"}
+    up, down = "vless://id@1.1.1.1:443?type=tcp#up", "vless://id@2.2.2.2:443?type=tcp#down"
+
+    result = apply_content([up, down], section, ctx, now=1000, node_down=lambda link: link == down)
+
+    assert result[0].endswith("#up%20%E2%9C%85")
+    assert result[1].endswith("#down%20%E2%9D%8C")
+
+
+def test_offline_node_does_not_override_expired_status():
+    ctx = {"email": "u@example.com", "expire": 500, "now": 1000}
+    section = {"remark_template": "{{STATUS_EMOJI}}", "expired_template": "{{STATUS_EMOJI}} expired"}
+
+    result = apply_content(["vless://id@1.1.1.1:443#n"], section, ctx, now=1000, node_down=lambda link: True)
+
+    assert "%E2%8C%9B" in result[0]

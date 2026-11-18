@@ -301,7 +301,7 @@ curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN?nodes=US,UK"
 | `{{DAYS_LEFT}}` | Количество оставшихся дней срока действия (или `∞`) | `14` |
 | `{{EXPIRE_DATE}}` | Дата окончания действия в формате `YYYY-MM-DD` (или `∞`) | `2026-12-31` |
 | `{{STATUS}}` | Текущий статус подписки (`active`, `expired`, `depleted`) | `active` |
-| `{{STATUS_EMOJI}}` | Эмодзи текущего статуса (`✅`, `⌛`, `🚫`) | `✅` |
+| `{{STATUS_EMOJI}}` | Эмодзи текущего статуса (`✅`, `⌛`, `🚫`); у активной подписки на узле, который сейчас недоступен на панели, `❌` | `✅` |
 
 Токены подставляются в поля `remark_template`, `expired_template`, `depleted_template`, а также в поля профиля `title`, `support_url` и `announce`. Нераспознанные токены сохраняются без изменений.
 
