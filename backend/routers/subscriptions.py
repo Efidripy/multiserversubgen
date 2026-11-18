@@ -37,7 +37,7 @@ from services.subscription_remote_rules import RemoteRulesStore, resolve_client_
 from services.subscription_devices import DeviceDecision, check_device, list_devices, delete_device
 from services.subscription_page import wants_page, render_page, page_headers
 from services.subscription_happ_crypto import encrypt_happ_link
-from services.subscription_links import get_link_inbound_remark
+from services.subscription_links import get_link_inbound_remark, get_link_node_id, get_offline_node_ids
 from services.telegram_qr import build_subscription_qr_png
 from services.telegram_access import TelegramSubscriptionAccessGate
 from services.telegram_registry import TelegramRegistry
@@ -312,7 +312,11 @@ def build_subscriptions_router(
         content_section = copy.deepcopy(settings.get("content", {}))
         if rule and rule.get("remark_template"):
             content_section["remark_template"] = rule["remark_template"]
-        links = apply_content(links, content_section, ctx, now=ctx["now"], shuffle=random.shuffle, inbound_remark=get_link_inbound_remark)
+        offline_nodes = get_offline_node_ids() if content_section.get("remark_template") else set()
+        links = apply_content(
+            links, content_section, ctx, now=ctx["now"], shuffle=random.shuffle, inbound_remark=get_link_inbound_remark,
+            node_down=lambda link: get_link_node_id(link) in offline_nodes,
+        )
         page = wants_page(request.headers, request.query_params, settings.get("page", {}), client_matched=bool(match_client(settings, request.headers.get("user-agent"))))
         if rule and rule.get("response") == "page" and settings.get("page", {}).get("enabled"):
             page = True
