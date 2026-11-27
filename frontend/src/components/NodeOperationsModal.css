@@ -25,9 +25,3 @@
 }
 
 /* Outbound form: compact like the rest of the panel. */
-[data-node-operations] .outbound-editor :is(label, summary, span) { font-size: 12px; }
-[data-node-operations] .outbound-editor label > span { color: var(--text-secondary); }
-[data-node-operations] .outbound-editor :is(.form-control, .form-select) { height: 32px; min-height: 32px; padding-block: 4px; line-height: 1.4; font-size: 13px; }
-[data-node-operations] .outbound-editor textarea.form-control { height: auto; min-height: 80px; }
-[data-node-operations] .outbound-editor summary { cursor: pointer; padding-block: 4px; }
-[data-node-operations] .outbound-editor .btn { margin-block: 2px; margin-inline-end: 4px; }

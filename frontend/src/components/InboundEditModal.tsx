@@ -74,7 +74,7 @@ export function InboundEditModal({ inbound, nodeId, onClose, onSaved }: Props) {
           <div className="drawer__subtitle">{inbound.protocol.toUpperCase()} · {inbound.node_name}</div></div>
         <button className="drawer__close" aria-label={t('common.close')} onClick={onClose}>×</button>
       </div>
-      <div className="drawer__body">
+      <div className="drawer__body outbound-editor">
         <div className="d-flex flex-wrap gap-2 mb-3">
           <button className={`seg-tab ${mode === 'form' ? 'seg-tab--active' : ''}`} aria-pressed={mode === 'form'}
             disabled={!value} onClick={() => setMode('form')}>{t('inbounds.form')}</button>

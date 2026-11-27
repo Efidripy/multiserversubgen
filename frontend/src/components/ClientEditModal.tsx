@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
-import { generateNodeMldsa65, generateNodeUuid, generateNodeVlessEncryption } from '../api/serverOps';
+import { generateNodeMldsa65, generateNodeVlessEncryption } from '../api/serverOps';
 import { useTheme } from '../contexts/ThemeContext';
 import { LazyJsonEditor } from './LazyJsonEditor';
 import { SchemaForm } from './outbound/SchemaForm';
@@ -80,14 +80,11 @@ export function ClientEditModal({ client, onClose, onSaved }: Props) {
   const update = (next: RecordValue) => setText(JSON.stringify(next, null, 2));
   const showError = (err: any, fallback: string) => setError(err?.response?.data?.detail || err?.message || fallback);
 
-  const generate = async (kind: 'uuid' | 'vless' | 'mldsa') => {
+  const generate = async (kind: 'vless' | 'mldsa') => {
     if (!client.node_id || !value) return;
     setBusy(true); setError('');
     try {
-      if (kind === 'uuid') {
-        const identity = 'uuid' in value || typeof value.id === 'number' ? 'uuid' : 'id';
-        update({ ...value, [identity]: await generateNodeUuid(client.node_id) });
-      } else if (kind === 'vless') {
+      if (kind === 'vless') {
         const auths = await generateNodeVlessEncryption(client.node_id);
         const encryption = auths.find(item => item.encryption)?.encryption;
         if (!encryption) throw new Error(t('clients.vlessEncryptionGenerationFailed'));
@@ -152,7 +149,7 @@ export function ClientEditModal({ client, onClose, onSaved }: Props) {
           <div className="drawer__subtitle">{client.email}</div></div>
         <button className="drawer__close" aria-label={t('common.close')} disabled={busy} onClick={onClose}>×</button>
       </div>
-      <div className="drawer__body">
+      <div className="drawer__body outbound-editor">
         <div className="d-flex flex-wrap gap-2 mb-3">
           <button className={`seg-tab ${mode === 'form' ? 'seg-tab--active' : ''}`} aria-pressed={mode === 'form'}
             disabled={!value || busy} onClick={() => setMode('form')}>{t('inbounds.form')}</button>
@@ -162,12 +159,10 @@ export function ClientEditModal({ client, onClose, onSaved }: Props) {
         {error && <div role="alert" className="alert alert-danger">{error}</div>}
         {expected && !value && <div role="alert">{t('nodeOps.invalidShape')}</div>}
         {mode === 'json' ? <LazyJsonEditor label="JSON" value={text} onChange={setText} readOnly={!expected || busy} /> :
-          value && <fieldset disabled={busy}>
+          value && <fieldset className="m-0 min-w-0 border-0 p-0" disabled={busy}>
             <SchemaForm value={value} fields={clientFields(client.protocol, value)} onChange={update} />
           </fieldset>}
         <div className="d-flex flex-wrap gap-2 mt-3">
-          {['vless', 'vmess'].includes(client.protocol) && <button className="btn btn-sm btn-ghost-secondary"
-            disabled={busy || !value || !client.node_id} onClick={() => void generate('uuid')}>{t('clients.generateNewUuid')}</button>}
           {client.protocol === 'vless' && <button className="btn btn-sm btn-ghost-secondary"
             disabled={busy || !value || !client.node_id} onClick={() => void generate('vless')}>
             {t('clients.generateVlessEncryption')}</button>}

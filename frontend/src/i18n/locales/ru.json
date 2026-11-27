@@ -582,6 +582,7 @@
     "trafficResetForEmail": "Трафик сброшен: {{email}}",
     "resetFailed": "Не удалось сбросить",
     "generateRandomEmail": "Сгенерировать случайный email",
+    "generateMldsa65": "Сгенерировать ML-DSA-65",
     "generateNewUuid": "Сгенерировать новый UUID",
     "uuidGenerated": "UUID сгенерирован нодой",
     "uuidGenerationFailed": "Не удалось сгенерировать UUID",

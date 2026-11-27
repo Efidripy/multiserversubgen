@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import './SchemaForm.css';
 import { deletePath, getPath, setPath } from './paths';
 import type { FieldDef, ItemContext, Outbound, Path } from './types';
 
