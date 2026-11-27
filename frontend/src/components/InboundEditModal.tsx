@@ -30,14 +30,12 @@ export function InboundEditModal({ inbound, nodeId, onClose, onSaved }: Props) {
   try {
     const parsed = JSON.parse(text);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
-      ['settings', 'streamSettings', 'sniffing'].every(k => parsed[k] && typeof parsed[k] === 'object' && !Array.isArray(parsed[k]))) {
+      ['settings', 'streamSettings', 'sniffing'].every(k => parsed[k] === undefined ||
+        (parsed[k] !== null && typeof parsed[k] === 'object' && !Array.isArray(parsed[k])))) {
       value = parsed;
     }
   } catch { /* JSON is being edited */ }
   const update = (next: Record<string, any>) => {
-    for (const key of ['settings', 'streamSettings', 'sniffing']) {
-      if (!(key in next)) next = { ...next, [key]: {} };
-    }
     setText(JSON.stringify(next, null, 2));
   };
   const generate = async (kind: 'reality' | 'vless') => {
@@ -88,7 +86,7 @@ export function InboundEditModal({ inbound, nodeId, onClose, onSaved }: Props) {
         {mode === 'json' ? <LazyJsonEditor label="JSON" value={text} onChange={setText} readOnly={!expected || busy} /> :
           value && <><SchemaForm value={value} fields={inboundFields} onChange={update} />
             <div className="d-flex flex-wrap gap-2 mt-3">
-              {value.streamSettings.security === 'reality' && <button className="btn btn-sm btn-ghost-secondary" disabled={busy}
+              {value.streamSettings?.security === 'reality' && <button className="btn btn-sm btn-ghost-secondary" disabled={busy}
                 onClick={() => void generate('reality')}>{t('inbounds.getNewCert')}</button>}
               {inbound.protocol === 'vless' && <button className="btn btn-sm btn-ghost-secondary" disabled={busy} onClick={() => void generate('vless')}>
                 {t('inbounds.generateVlessDecryption')}</button>}

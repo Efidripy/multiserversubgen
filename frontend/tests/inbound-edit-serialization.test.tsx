@@ -20,6 +20,13 @@ function open() {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); get.mockReset(); put.mockReset(); });
 
 describe('inbound editor', () => {
+  it('saves without changes', async () => {
+    open();
+    await screen.findByLabelText('Remark');
+    fireEvent.click(screen.getByText('common.save'));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect(put.mock.calls[0][1]).toEqual({ value: config, expected: config });
+  });
   it('saves a changed form while preserving unknown fields and expected version', async () => {
     open();
     fireEvent.change(await screen.findByLabelText('Remark'), { target: { value: 'updated' } });
