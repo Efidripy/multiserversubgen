@@ -42,6 +42,7 @@ CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
 
 SERVER_HISTORY_METRICS = frozenset({
     "cpu", "mem", "netUp", "netDown", "online", "load1", "load5", "load15",
+    "swap", "pktUp", "pktDown", "diskRead", "diskWrite", "diskUsage", "tcpCount", "udpCount",
 })
 SERVER_HISTORY_BUCKETS = frozenset({2, 30, 60, 180, 360, 720, 1440, 2880, 10080})
 
@@ -698,6 +699,50 @@ class ServerMonitor:
             logger.warning(f"Failed to get core service config from {node['name']}: {exc}")
             return {"error": str(exc)}
     
+    def _read_xray_template(self, session, base_url):
+        response = xui_request(session, "POST", f"{base_url}/panel/api/xray/")
+        if response.status_code != 200:
+            raise ValueError(f"Panel returned status {response.status_code}")
+        body = response.json()
+        if not isinstance(body, dict) or not body.get("success"):
+            raise ValueError((body.get("msg") if isinstance(body, dict) else None) or "Panel request failed")
+        settings = json.loads(body["obj"]) if isinstance(body.get("obj"), str) else body.get("obj")
+        if not isinstance(settings, dict) or not isinstance(settings.get("xraySetting"), dict) or not isinstance(settings.get("outboundTestUrl"), str):
+            raise ValueError("Malformed panel settings")
+        return settings
+
+    def get_xray_template(self, node):
+        session, base_url = self._get_session(node)
+        if not session:
+            raise ValueError("Failed to connect")
+        return {"template": self._read_xray_template(session, base_url)["xraySetting"]}
+
+    def update_xray_template(self, node, section, value, expected):
+        if self._is_read_only(node):
+            raise PermissionError("Node is read-only")
+        session, base_url = self._get_session(node)
+        if not session:
+            raise ValueError("Failed to connect")
+        settings = self._read_xray_template(session, base_url)
+        template = settings["xraySetting"]
+        current = template if section == "all" else template.get(section)
+        if current != expected:
+            raise RuntimeError("Template has changed; reload before saving")
+        if section == "all":
+            template = value
+        else:
+            template[section] = value
+        response = xui_request(session, "POST", f"{base_url}/panel/api/xray/update", data={
+            "xraySetting": json.dumps(template, ensure_ascii=False),
+            "outboundTestUrl": settings["outboundTestUrl"],
+        })
+        if response.status_code != 200:
+            raise ValueError(f"Panel returned status {response.status_code}")
+        body = response.json()
+        if not isinstance(body, dict) or not body.get("success"):
+            raise ValueError((body.get("msg") if isinstance(body, dict) else None) or "Panel update failed")
+        return {"success": True}
+
     def restart_xray(self, node: Dict) -> bool:
         if self._is_read_only(node):
             logger.info(f"Skip restart xray on read-only node {node['name']}")
@@ -758,25 +803,15 @@ class ServerMonitor:
             return {"error": "Failed to connect"}
         
         try:
-            # The pinned v3 OpenAPI declares JSON for the count-in-path
-            # endpoints.  Form data is a narrowly bounded compatibility path
-            # only when a concrete media-type rejection proves it is needed.
-            json_body = {"level": validate_server_log_level(level), "syslog": bool(syslog)}
-            form_body = {"level": json_body["level"], "syslog": "true" if syslog else "false"}
+            form_body = {"level": validate_server_log_level(level), "syslog": "true" if syslog else "false"}
             res = None
             logs_endpoint = ""
-            v3_form_compat = False
 
             # v3: count в URL path — POST /panel/api/server/logs/{count}
             try:
                 candidate = xui_request(s, "POST",
                                         f"{base_url}/panel/api/server/logs/{count}",
-                                        json=json_body, timeout=15)
-                if candidate.status_code in (415, 422):
-                    candidate = xui_request(s, "POST",
-                                            f"{base_url}/panel/api/server/logs/{count}",
-                                            data=form_body, timeout=15)
-                    v3_form_compat = True
+                                        data=form_body, timeout=15)
                 if candidate.status_code not in (404, 405):
                     res = candidate
                     logs_endpoint = f"{base_url}/panel/api/server/logs/{count}"
@@ -817,9 +852,7 @@ class ServerMonitor:
                 if not logs and syslog is None:
                     syslog_payload = {"level": level, "syslog": "true"}
                     if logs_endpoint.endswith(f"/{count}"):
-                        request_kwargs = {"data": syslog_payload} if v3_form_compat else {
-                            "json": {"level": level, "syslog": True}
-                        }
+                        request_kwargs = {"data": syslog_payload}
                     else:
                         request_kwargs = {"data": {"count": str(count), **syslog_payload}}
                     syslog_response = xui_request(

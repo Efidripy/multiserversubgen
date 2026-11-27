@@ -129,6 +129,8 @@ REGISTERED_V3_OPERATIONS = frozenset(
         route("POST", "/panel/api/setting/apiTokens/setEnabled/{id}"),
         route("POST", "/panel/api/backuptotgbot"),
         route("GET", "/panel/api/xray/getOutboundsTraffic"),
+        route("POST", "/panel/api/xray/"),
+        route("POST", "/panel/api/xray/update"),
     }
 )
 

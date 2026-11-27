@@ -311,7 +311,7 @@ api.interceptors.response.use((response) => {
 
   if (method === 'get') {
     const ttl = getTTLForUrl(url);
-    if (ttl > 0) {
+    if (ttl > 0 && !String(response.headers['cache-control'] || '').toLowerCase().includes('no-store')) {
       const key = buildCacheKey(url, cacheParams(response.config.params), getAuth().username);
       const requestGeneration = (response.config as CacheAwareRequestConfig).__cacheGeneration;
       if (requestGeneration != null && requestGeneration !== cacheGeneration) {

@@ -1,0 +1,36 @@
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+const mocks = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn(), history: vi.fn() }));
+vi.mock('../src/api/serverOps', () => ({ getXrayTemplate: mocks.get, updateXrayTemplate: mocks.update, getServerHistory: mocks.history }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
+vi.mock('react-chartjs-2', () => ({ Line: () => <div data-testid="chart" /> }));
+import { XrayTemplateEditor } from '../src/components/XrayTemplateEditor';
+import { SystemHistory } from '../src/components/SystemHistory';
+afterEach(() => { cleanup(); vi.clearAllMocks(); });
+it('validates edits and preserves them after a failed save', async () => {
+  mocks.get.mockResolvedValue({ routing: { rules: [] } });
+  mocks.update.mockRejectedValue(new Error('changed'));
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  render(<XrayTemplateEditor nodeId={1} section="routing" />);
+  const input = await screen.findByLabelText('nodeOps.template') as HTMLTextAreaElement;
+  await waitFor(() => expect(input.value).toContain('rules'));
+  const save = screen.getByText('nodeOps.saveApply') as HTMLButtonElement;
+  expect(save.disabled).toBe(true);
+  fireEvent.change(input, { target: { value: '{' } });
+  expect(save.disabled).toBe(true);
+  expect(screen.getByRole('alert')).toBeTruthy();
+  fireEvent.change(input, { target: { value: '{"rules":[1]}' } });
+  fireEvent.click(save);
+  await screen.findByText('changed');
+  expect(input.value).toBe('{"rules":[1]}');
+  expect(mocks.update).toHaveBeenCalledWith(1, 'routing', { rules: [1] }, { rules: [] });
+});
+it('requests only active history metrics and exposes errors', async () => {
+  mocks.history.mockResolvedValue([]);
+  render(<SystemHistory nodeId={1} />);
+  await waitFor(() => expect(mocks.history).toHaveBeenCalledWith(1, 'cpu', 2, expect.any(AbortSignal)));
+  mocks.history.mockRejectedValue(new Error('node unavailable'));
+  fireEvent.click(screen.getByText('nodeOps.ram'));
+  await screen.findByText('node unavailable');
+  expect(mocks.history.mock.calls.map((call) => call[1])).toEqual(['cpu', 'mem', 'swap']);
+});

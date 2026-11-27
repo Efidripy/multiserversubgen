@@ -1929,5 +1929,28 @@
     "env": "Configuration",
     "db": "Panel database"
   }
-}
+},
+  "nodeOps": {
+    "applied": "Saved and applied",
+    "history": "System History",
+    "outbounds": "Outbounds",
+    "routing": "Routing",
+    "template": "Template (editable)",
+    "running": "Running config (read-only)",
+    "saveApply": "Save & apply",
+    "reload": "Reload",
+    "discard": "Discard unsaved changes and reload?",
+    "confirmApply": "An invalid config can stop Xray on this node. Save and apply?",
+    "invalidShape": "Invalid value for this section",
+    "interval": "Interval",
+    "cpu": "CPU",
+    "ram": "RAM",
+    "bandwidth": "Bandwidth",
+    "packets": "Packets",
+    "connections": "Connections",
+    "diskIO": "Disk I/O",
+    "diskUsage": "Disk Usage",
+    "online": "Online",
+    "load": "Load"
+  }
 }
