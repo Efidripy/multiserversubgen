@@ -55,10 +55,8 @@ describe('iOS standalone launch shell', () => {
   it('keeps the standalone layout within the visual viewport without disabling zoom', () => {
     expect(indexHtml).toContain('width=device-width, initial-scale=1, viewport-fit=cover');
     expect(indexHtml).not.toMatch(/(?:maximum-scale|user-scalable)/i);
-    expect(appCss).toMatch(/@media \(max-width: 1024px\)[\s\S]*?\.app-layout,[\s\S]*?\.app-shell\s*\{[\s\S]*?padding-top: env\(safe-area-inset-top, 0px\);/);
-    expect(appCss).toMatch(/\.app-main\s*\{[\s\S]*?min-height: calc\(100dvh - env\(safe-area-inset-top, 0px\)\);/);
     expect(appCss).toMatch(/\.sidebar,[\s\S]*?\.app-sidebar\s*\{[\s\S]*?top: env\(safe-area-inset-top, 0px\);[\s\S]*?height: calc\(100dvh - env\(safe-area-inset-top, 0px\)\);/);
-    expect(appCss).toMatch(/\.app-topbar\s*\{[\s\S]*?height: 56px;[\s\S]*?padding: 0 12px;/);
+    expect(appCss).toMatch(/\.app-topbar\s*\{[^}]*height: calc\(56px \+ env\(safe-area-inset-top, 0px\)\);[^}]*padding: env\(safe-area-inset-top, 0px\) 12px 0;/);
     expect(appCss).toMatch(/\.app-topbar__title-content\s*\{[\s\S]*?min-width: 0;[\s\S]*?overflow: hidden;/);
     expect(appCss).toMatch(/\.app-topbar__activity-dot\s*\{[\s\S]*?flex: 0 0 auto;/);
     // Desktop title must be a flex container too, or the dot renders 0x0 and disappears.

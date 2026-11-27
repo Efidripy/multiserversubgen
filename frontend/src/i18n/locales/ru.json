@@ -1579,6 +1579,7 @@
     "new": "Новый дизайн"
   },
   "sidebar": {
+    "preferences": "Настройки интерфейса",
     "themeLabel": "Тема",
     "themeChoose": "Выбрать режим темы",
     "themeCurrent": "Тема {{mode}}",

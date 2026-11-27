@@ -16,6 +16,12 @@ describe('Sidebar user management control', () => {
     const onOpenUsers = vi.fn();
     const { rerender } = render(<ThemeProvider><Sidebar {...props} canManageUsers={false} onOpenUsers={vi.fn()} /></ThemeProvider>);
     expect(screen.queryByRole('button', { name: 'usersAdmin.open' })).toBeNull();
+    const preferences = screen.getByRole('button', { name: 'sidebar.preferences' });
+    expect(preferences.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(preferences);
+    expect(screen.getByText('language.title')).toBeTruthy();
+    fireEvent.click(preferences);
+    expect(screen.queryByText('language.title')).toBeNull();
     rerender(<ThemeProvider><Sidebar {...props} canManageUsers onOpenUsers={onOpenUsers} /></ThemeProvider>);
     expect(screen.getByRole('button', { name: 'usersAdmin.open' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'usersAdmin.open' }).className).toContain('sidebar__user-settings');

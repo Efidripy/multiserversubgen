@@ -1604,6 +1604,7 @@
     "new": "New design"
   },
   "sidebar": {
+    "preferences": "Preferences",
     "themeLabel": "Theme",
     "themeChoose": "Choose theme mode",
     "themeCurrent": "Theme {{mode}}",
