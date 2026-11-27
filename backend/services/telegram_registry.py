@@ -2271,10 +2271,11 @@ class TelegramRegistry:
         action: str,
         idempotency_key: str,
         created_by: str,
+        notify: bool = True,
     ) -> NodeBulkActionQueueResult:
         return _telegram_registry_nodeops.queue_node_bulk_action(
             self, admin_telegram_user_id=admin_telegram_user_id, node_id=node_id,
-            action=action, idempotency_key=idempotency_key, created_by=created_by,
+            action=action, idempotency_key=idempotency_key, created_by=created_by, notify=notify,
             positive_int=_positive_int, nonempty=_nonempty,
             payload_digest=_payload_digest, error_type=TelegramRegistryError,
             node_policy_error=NodePolicyUnavailableError,
@@ -2310,11 +2311,12 @@ class TelegramRegistry:
         expected_customer_version: int,
         idempotency_key: str,
         created_by: str,
+        notify: bool = True,
     ) -> NodeProvisioningQueueResult:
         return _telegram_registry_nodeops.queue_customer_node_add(
             self, customer_id=customer_id, node_id=node_id,
             expected_customer_version=expected_customer_version,
-            idempotency_key=idempotency_key, created_by=created_by,
+            idempotency_key=idempotency_key, created_by=created_by, notify=notify,
             positive_int=_positive_int, nonempty=_nonempty,
             payload_digest=_payload_digest, error_type=TelegramRegistryError,
             lifecycle_error=LifecycleUnavailableError,

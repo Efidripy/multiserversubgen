@@ -143,6 +143,7 @@
     "addNodeDialogTitle": "Добавить на узел",
     "suspendNode": "Пауза",
     "resumeNode": "Включить",
+    "notifyNodeAdd": "Сообщить клиенту в Telegram",
     "addNodeConfirm": "Добавить пользователя на узел «{{node}}»?",
     "nodeQueued": "В очереди",
     "nodeReady": "Готов",

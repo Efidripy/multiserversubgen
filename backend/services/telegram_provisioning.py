@@ -1051,7 +1051,7 @@ class TelegramProvisioningWorker:
             mark_completed_initial_snapshot(conn, job_id)
             if status == "succeeded":
                 job = conn.execute(
-                    "SELECT trigger, customer_id, source_existing_discovery_target_id "
+                    "SELECT trigger, customer_id, source_existing_discovery_target_id, notify_user "
                     "FROM telegram_provisioning_jobs WHERE id = ?", (job_id,)
                 ).fetchone()
                 trigger = str(job[0]) if job is not None else ""
@@ -1076,20 +1076,21 @@ class TelegramProvisioningWorker:
                     (job_id,),
                 ).fetchall()
                 if trigger == "node_backfill":
-                    conn.executemany(
-                        """
-                        INSERT OR IGNORE INTO telegram_outbox
-                            (event_type, entity_id, dedupe_key, payload_json)
-                        VALUES ('user_node_added', ?, ?, ?)
-                        """,
-                        [
-                            (
-                                str(int(row[0])), f"user:node-added:{job_id}:{int(row[0])}",
-                                json.dumps({"node_name": str(row[1])}, separators=(",", ":")),
-                            )
-                            for row in recipients
-                        ],
-                    )
+                    if job is not None and bool(job[3]):
+                        conn.executemany(
+                            """
+                            INSERT OR IGNORE INTO telegram_outbox
+                                (event_type, entity_id, dedupe_key, payload_json)
+                            VALUES ('user_node_added', ?, ?, ?)
+                            """,
+                            [
+                                (
+                                    str(int(row[0])), f"user:node-added:{job_id}:{int(row[0])}",
+                                    json.dumps({"node_name": str(row[1])}, separators=(",", ":")),
+                                )
+                                for row in recipients
+                            ],
+                        )
                 else:
                     conn.executemany(
                         """

@@ -3566,3 +3566,26 @@ def test_admin_forget_button_removes_missing_bindings(tmp_path):
     assert "node-two" in done.text
     with connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE management_state = 'missing'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("bulk,notify", [(False, True), (False, False), (True, True), (True, False)])
+def test_admin_node_add_notification_choices(tmp_path, bulk, notify):
+    db_path = str(tmp_path / "notify.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(email_display="notify-user", origin="telegram", email_source="telegram_username", public_code="notify-user")
+    registry.get_or_create_identity(telegram_user_id=42, chat_id=42, username="notify_user", first_name=None, last_name=None)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42", (customer_id,))
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    callback = "admin:node-bulk:add_all:1:0" if bulk else f"admin:cn:{customer_id}:1:add:1:0"
+    message = service.handle_update(_admin_callback(801, callback))[0]
+    buttons = [button for row in message.reply_markup["inline_keyboard"] for button in row]
+    assert len(buttons) == 3
+    assert all(len(button["callback_data"].encode()) <= 64 for button in buttons)
+    selected = buttons[0 if notify else 1]["callback_data"]
+    service.handle_update(_admin_callback(802, selected))
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT notify_user FROM telegram_provisioning_jobs").fetchone()[0] == int(notify)

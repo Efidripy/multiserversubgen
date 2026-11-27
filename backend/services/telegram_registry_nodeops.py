@@ -208,6 +208,7 @@ def queue_node_bulk_action(
     action: str,
     idempotency_key: str,
     created_by: str,
+    notify: bool = True,
     positive_int, nonempty, payload_digest, error_type, node_policy_error,
     lifecycle_error, version_conflict_error, idempotency_conflict_error,
     queue_result_type, preview_type, mark_completed_initial_snapshot,
@@ -286,8 +287,8 @@ def queue_node_bulk_action(
                 job = conn.execute(
                     """
                     INSERT INTO telegram_provisioning_jobs
-                        (customer_id, trigger, idempotency_key, policy_snapshot_digest, created_by)
-                    VALUES (?, 'node_backfill', ?, ?, ?)
+                        (customer_id, trigger, idempotency_key, policy_snapshot_digest, created_by, notify_user)
+                    VALUES (?, 'node_backfill', ?, ?, ?, ?)
                     """,
                     (
                         target["customer_id"], f"node-bulk-add:{key}:{target['customer_id']}",
@@ -296,7 +297,7 @@ def queue_node_bulk_action(
                             "email": target["email"], "inbound_id": inbound_id,
                             "flow": client_flow, "policy_version": int(policy[3]),
                         }),
-                        actor,
+                        actor, int(notify),
                     ),
                 )
                 conn.execute(
@@ -580,6 +581,7 @@ def queue_customer_node_add(
     expected_customer_version: int,
     idempotency_key: str,
     created_by: str,
+    notify: bool = True,
     positive_int, nonempty, payload_digest, error_type, lifecycle_error,
     version_conflict_error, idempotency_conflict_error, node_policy_error,
     queue_result_type, inbound_id, client_flow
@@ -602,6 +604,8 @@ def queue_customer_node_add(
             "node_id": local_node_id,
             "expected_customer_version": expected_version,
         }
+        if not notify:
+            payload["notify"] = False
         digest = payload_digest(payload)
         if receipt:
             if str(receipt[0]) != digest:
@@ -670,10 +674,10 @@ def queue_customer_node_add(
         job = conn.execute(
             """
             INSERT INTO telegram_provisioning_jobs
-                (customer_id, trigger, idempotency_key, policy_snapshot_digest, created_by)
-            VALUES (?, 'node_backfill', ?, ?, ?)
+                (customer_id, trigger, idempotency_key, policy_snapshot_digest, created_by, notify_user)
+            VALUES (?, 'node_backfill', ?, ?, ?, ?)
             """,
-            (local_customer_id, f"node-add:{key}", payload_digest(snapshot), actor),
+            (local_customer_id, f"node-add:{key}", payload_digest(snapshot), actor, int(notify)),
         )
         job_id = int(job.lastrowid)
         conn.execute(

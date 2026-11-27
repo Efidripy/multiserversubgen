@@ -606,7 +606,20 @@ def test_worker_replaces_a_confirmed_missing_binding_after_explicit_readd(tmp_pa
     assert binding == (attempt[1], attempt[2], "confirmed", 1)
 
 
-def test_node_backfill_notifies_only_that_another_named_server_was_added(tmp_path):
+def test_legacy_provisioning_job_notify_migration_defaults_to_enabled(tmp_path):
+    db_path, approval, _attempt = _queued_job(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("ALTER TABLE telegram_provisioning_jobs DROP COLUMN notify_user")
+    init_db(db_path)
+    init_db(db_path)
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT notify_user FROM telegram_provisioning_jobs WHERE id = ?", (approval.job_id,)
+        ).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("notify", [True, False])
+def test_node_backfill_notifies_only_that_another_named_server_was_added(tmp_path, notify):
     db_path = str(tmp_path / "node-backfill.db")
     init_db(db_path)
     with connect(db_path) as conn:
@@ -629,13 +642,18 @@ def test_node_backfill_notifies_only_that_another_named_server_was_added(tmp_pat
         customer_id=customer_id, node_id=1, expected_customer_version=1,
         idempotency_key="single-node-backfill", created_by="admin",
     )
+    if not notify:
+        with connect(db_path) as conn:
+            conn.execute("UPDATE telegram_provisioning_jobs SET notify_user = 0 WHERE id = ?", (queued.job_id,))
 
     assert _worker(db_path, FakeProvisioningPort()).run_once().outcome == "succeeded"
     with connect(db_path) as conn:
         events = conn.execute(
             "SELECT event_type, entity_id, payload_json FROM telegram_outbox ORDER BY id"
         ).fetchall()
-    assert events == [("user_node_added", "55", '{"node_name":"edge-eu"}')]
+        status = conn.execute("SELECT status FROM telegram_provisioning_jobs WHERE id = ?", (queued.job_id,)).fetchone()[0]
+    assert events == ([("user_node_added", "55", '{"node_name":"edge-eu"}')] if notify else [])
+    assert status == "succeeded"
     assert queued.status == "queued"
 
 
