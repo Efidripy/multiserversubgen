@@ -132,7 +132,7 @@ class TestServerMonitorV3OpsContracts:
         request.assert_called_once()
         assert request.call_args.args[:3] == (session, "POST", "https://panel.test/panel/api/server/importDB")
 
-    def test_server_logs_use_pinned_v3_json_contract_and_fall_back_to_syslog(self):
+    def test_server_logs_use_form_contract_and_fall_back_to_syslog(self):
         monitor = self._monitor()
         session = MagicMock()
         with patch.object(monitor, "_get_session", return_value=(session, "https://panel.test")):
@@ -145,8 +145,8 @@ class TestServerMonitorV3OpsContracts:
             ) as request:
                 assert monitor.get_server_logs(_node(), count=10)["logs"] == ["journal line"]
         assert request.call_args_list == [
-            call(session, "POST", "https://panel.test/panel/api/server/logs/10", json={"level": "info", "syslog": False}, timeout=15),
-            call(session, "POST", "https://panel.test/panel/api/server/logs/10", json={"level": "info", "syslog": True}, timeout=15),
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "false"}, timeout=15),
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "true"}, timeout=15),
         ]
 
     def test_server_logs_accepts_405_as_route_absence(self):
@@ -159,7 +159,7 @@ class TestServerMonitorV3OpsContracts:
             ) as request:
                 assert monitor.get_server_logs(_node(), count=10)["logs"] == ["line"]
         assert request.call_args_list == [
-            call(session, "POST", "https://panel.test/panel/api/server/logs/10", json={"level": "info", "syslog": False}, timeout=15),
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "false"}, timeout=15),
             call(session, "POST", "https://panel.test/panel/api/server/logs", data={"count": "10", "level": "info", "syslog": "false"}),
         ]
 
@@ -173,22 +173,9 @@ class TestServerMonitorV3OpsContracts:
             session,
             "POST",
             "https://panel.test/panel/api/server/logs/10",
-            json={"level": "notice", "syslog": True},
+            data={"level": "notice", "syslog": "true"},
             timeout=15,
         )
-
-    def test_server_logs_uses_form_only_after_explicit_media_type_rejection(self):
-        monitor = self._monitor()
-        session = MagicMock()
-        with patch.object(monitor, "_get_session", return_value=(session, "https://panel.test")), patch(
-            "server_monitor.xui_request",
-            side_effect=[_response(415), _response(200, {"success": True, "obj": "line"})],
-        ) as request:
-            assert monitor.get_server_logs(_node(), count=10)["logs"] == ["line"]
-        assert request.call_args_list == [
-            call(session, "POST", "https://panel.test/panel/api/server/logs/10", json={"level": "info", "syslog": False}, timeout=15),
-            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "false"}, timeout=15),
-        ]
 
     def test_server_logs_do_not_fallback_when_syslog_is_explicitly_disabled(self):
         monitor = self._monitor()
@@ -295,3 +282,54 @@ class TestServerOpsRouterContracts:
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
         assert response.json() == {"id": 2, "name": "new", "token": "ephemeral"}
+
+
+def test_xray_template_read_update_and_conflict():
+    import json
+    import pytest
+    monitor = ServerMonitor(decrypt_func=lambda value: value)
+    session = MagicMock()
+    template = {"outbounds": [{"tag": "old"}], "routing": {"rules": []}, "log": {"level": "info"}}
+    body = {"success": True, "obj": json.dumps({"xraySetting": template, "outboundTestUrl": "https://example.test"})}
+    with patch.object(monitor, "_get_session", return_value=(session, "https://panel.test")), patch(
+        "server_monitor.xui_request", side_effect=[_response(200, body), _response(200, body), _response(200, {"success": True}), _response(200, body)]
+    ) as request:
+        assert monitor.get_xray_template(_node()) == {"template": template}
+        assert monitor.update_xray_template(_node(), "routing", {"rules": [1]}, {"rules": []}) == {"success": True}
+        fields = request.call_args_list[2].kwargs["data"]
+        assert json.loads(fields["xraySetting"]) == {**template, "routing": {"rules": [1]}}
+        assert fields["outboundTestUrl"] == "https://example.test"
+        with pytest.raises(RuntimeError):
+            monitor.update_xray_template(_node(), "outbounds", [], [])
+        assert request.call_count == 4
+    with patch.object(monitor, "_get_session") as connect, pytest.raises(PermissionError):
+        monitor.update_xray_template(_node(True), "all", {}, {})
+    connect.assert_not_called()
+
+
+def test_template_router_validation_errors_and_no_store():
+    monitor = MagicMock()
+    monitor.get_xray_template.return_value = {"template": {"routing": {}}}
+    client = TestServerOpsRouterContracts()._client(monitor)
+    url = "/api/v1/nodes/1/xray-config/template"
+    response = client.get(url)
+    assert response.json() == {"template": {"routing": {}}}
+    assert response.headers["cache-control"] == "no-store"
+    for section, value in [("all", []), ("routing", []), ("outbounds", [1]), ("other", {})]:
+        assert client.put(url, json={"section": section, "value": value, "expected": {}}).status_code == 400
+    monitor.update_xray_template.side_effect = RuntimeError("changed")
+    assert client.put(url, json={"section": "routing", "value": {}, "expected": {}}).status_code == 409
+    monitor.update_xray_template.side_effect = PermissionError("read-only")
+    assert client.put(url, json={"section": "routing", "value": {}, "expected": {}}).status_code == 403
+    monitor.update_xray_template.side_effect = ValueError("panel error")
+    response = client.put(url, json={"section": "routing", "value": {}, "expected": {}})
+    assert response.status_code == 502 and response.json()["detail"] == "panel error"
+
+
+def test_template_requires_admin_and_new_metrics_are_allowed():
+    from modules.auth.service import AuthService
+    from server_monitor import validate_server_history_request
+    for method in ("GET", "PUT"):
+        assert AuthService.required_role_for_request(method, "/api/v1/nodes/1/xray-config/template") == "admin"
+    for metric in ("swap", "pktUp", "pktDown", "diskRead", "diskWrite", "diskUsage", "tcpCount", "udpCount"):
+        assert validate_server_history_request(metric, 2) == (metric, 2)

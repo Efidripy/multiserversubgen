@@ -190,6 +190,35 @@ def build_server_ops_router(
             raise HTTPException(status_code=401)
         return await _run(server_monitor.get_xray_config, await _node(node_id))
 
+    @router.get("/api/v1/nodes/{node_id}/xray-config/template")
+    async def get_xray_template(request: Request, node_id: int):
+        if not check_auth(request):
+            raise HTTPException(status_code=401)
+        node = await _node(node_id)
+        try:
+            result = await _run(server_monitor.get_xray_template, node)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return JSONResponse(content=result, headers={"Cache-Control": "no-store"})
+
+    @router.put("/api/v1/nodes/{node_id}/xray-config/template")
+    async def update_xray_template(request: Request, node_id: int, data: Dict):
+        if not check_auth(request):
+            raise HTTPException(status_code=401)
+        section, value = data.get("section"), data.get("value")
+        valid = (section in ("all", "routing") and isinstance(value, dict)) or (section == "outbounds" and isinstance(value, list) and all(isinstance(item, dict) for item in value))
+        if not valid or "expected" not in data:
+            raise HTTPException(status_code=400, detail="Invalid template section or value")
+        node = await _node(node_id)
+        try:
+            return await _run(server_monitor.update_xray_template, node, section, value, data["expected"])
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     @router.post("/api/v1/nodes/{node_id}/backup-telegram")
     async def backup_telegram(request: Request, node_id: int):
         user = check_auth(request)

@@ -20,6 +20,8 @@ import {
   setApiTokenEnabled,
   updatePanel,
 } from '../api/serverOps';
+import { XrayTemplateEditor } from './XrayTemplateEditor';
+import { SystemHistory } from './SystemHistory';
 import { useToast } from './Toast';
 import { UIIcon, type IconName } from './UIIcon';
 
@@ -28,6 +30,9 @@ export type NodeOpsTab =
   | 'online'
   | 'metrics'
   | 'outbounds'
+  | 'outboundsConfig'
+  | 'routing'
+  | 'history'
   | 'observatory'
   | 'config'
   | 'versions'
@@ -74,7 +79,10 @@ const tabs: Array<{ id: NodeOpsTab; labelKey: string; icon: IconName }> = [
   { id: 'metrics', labelKey: 'serverStatus.xrayMetricsTitle', icon: 'monitoring' },
   { id: 'outbounds', labelKey: 'serverStatus.outboundTraffic', icon: 'upload' },
   { id: 'observatory', labelKey: 'serverStatus.xrayObservatory', icon: 'statusOn' },
-  { id: 'config', labelKey: 'serverStatus.viewXrayConfig', icon: 'note' },
+  { id: 'history', labelKey: 'nodeOps.history', icon: 'monitoring' },
+  { id: 'outboundsConfig', labelKey: 'nodeOps.outbounds', icon: 'upload' },
+  { id: 'routing', labelKey: 'nodeOps.routing', icon: 'note' },
+  { id: 'config', labelKey: 'serverStatus.xrayConfig', icon: 'note' },
   { id: 'versions', labelKey: 'serverStatus.xrayVersionsTitle', icon: 'download' },
   { id: 'tokens', labelKey: 'serverStatus.apiTokensTitle', icon: 'attach' },
   { id: 'keys', labelKey: 'serverStatus.keyGenerator', icon: 'snowflake' },
@@ -113,6 +121,7 @@ export function NodeOperationsModal({
 }: NodeOperationsModalProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const [configMode, setConfigMode] = useState<'template' | 'running'>('template');
   const [activeTab, setActiveTab] = useState<NodeOpsTab>(initialTab);
   const [dataByTab, setDataByTab] = useState<Partial<Record<NodeOpsTab, unknown>>>({});
   const [loadingTab, setLoadingTab] = useState<NodeOpsTab | null>(null);
@@ -148,7 +157,7 @@ export function NodeOperationsModal({
     const isCurrentRequest = () => requestId === tabRequestIdRef.current;
     tabAbortRef.current?.abort();
     tabAbortRef.current = null;
-    if (tab === 'keys' || tab === 'panel') return;
+    if (tab === 'keys' || tab === 'panel' || tab === 'history' || tab === 'outboundsConfig' || tab === 'routing' || (tab === 'config' && configMode === 'template')) return;
     const controller = new AbortController();
     tabAbortRef.current = controller;
     setLoadingTab(tab);
@@ -190,7 +199,7 @@ export function NodeOperationsModal({
         tabAbortRef.current = null;
       }
     }
-  }, [nodeId, t]);
+  }, [nodeId, t, configMode]);
 
   useEffect(() => {
     void loadTab(activeTab);
@@ -562,7 +571,11 @@ export function NodeOperationsModal({
               </div>
             )}
 
-            {activeTab === 'versions' ? renderVersions()
+            {activeTab === 'history' ? <SystemHistory nodeId={nodeId} />
+              : activeTab === 'outboundsConfig' ? <XrayTemplateEditor key="outbounds" nodeId={nodeId} section="outbounds" />
+              : activeTab === 'routing' ? <XrayTemplateEditor key="routing" nodeId={nodeId} section="routing" />
+              : activeTab === 'config' ? <div className="space-y-3"><div className="flex flex-wrap gap-2">{(['template', 'running'] as const).map((mode) => <button type="button" key={mode} aria-pressed={configMode === mode} className={buttonSecondaryClass} onClick={() => setConfigMode(mode)}>{t(`nodeOps.${mode}`)}</button>)}</div>{configMode === 'template' ? <XrayTemplateEditor nodeId={nodeId} section="all" /> : renderJsonPanel(activeData, t('common.noRecordsFound'))}</div>
+              : activeTab === 'versions' ? renderVersions()
               : activeTab === 'tokens' ? renderTokens()
                 : activeTab === 'keys' ? renderKeys()
                   : activeTab === 'panel' ? renderPanelActions()

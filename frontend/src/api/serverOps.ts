@@ -206,3 +206,17 @@ export async function setApiTokenEnabled(nodeId: number, tokenId: number, enable
   const res = await api.post(`/v1/nodes/${nodeId}/api-tokens/${tokenId}/set-enabled`, { enabled }, { auth: getAuth() });
   return res.data;
 }
+
+export type TemplateSection = 'all' | 'outbounds' | 'routing';
+export async function getXrayTemplate(nodeId: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const res = await api.get(`/v1/nodes/${nodeId}/xray-config/template`, { auth: getAuth(), signal, force: true });
+  return res.data.template;
+}
+export async function updateXrayTemplate(nodeId: number, section: TemplateSection, value: unknown, expected: unknown): Promise<void> {
+  await api.put(`/v1/nodes/${nodeId}/xray-config/template`, { section, value, expected }, { auth: getAuth() });
+}
+export async function getServerHistory(nodeId: number, metric: string, bucket: number, signal?: AbortSignal): Promise<Array<{ t: number; v: number }>> {
+  const res = await api.get(`/v1/nodes/${nodeId}/server-history/${metric}`, { auth: getAuth(), params: { bucket }, signal, force: true });
+  if (res.data?.error) throw new Error(String(res.data.error));
+  return res.data?.data || [];
+}
