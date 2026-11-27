@@ -27,7 +27,9 @@ class ClientsRuntime:
         db_path: Optional[str] = None,
         encrypt: Optional[Callable[[str], str]] = None,
         decrypt: Optional[Callable[[str], str]] = None,
+        get_inbound_metadata: Optional[Callable[[object], Dict]] = None,
     ) -> None:
+        self.get_inbound_metadata = get_inbound_metadata
         self.client_mgr = client_mgr
         self.clients_cache = clients_cache
         self.clients_cache_ttl = clients_cache_ttl
@@ -111,8 +113,37 @@ class ClientsRuntime:
                 bool(self.clients_cache.get("invalidated")),
             )
 
+    def _fill_inbound_fields(self, data: List[Dict]) -> List[Dict]:
+        """Keep inbound columns in the rows, so they outlive a node going offline."""
+        fields = ("protocol", "inbound_remark", "network")
+        known: Dict = {}
+        for row in self._snapshot_cache()[1]:
+            key = (row.get("node_id"), row.get("inbound_id"))
+            known.setdefault(key, {}).update({f: row[f] for f in fields if row.get(f)})
+        metadata: Dict = {}
+        result = []
+        for row in data:
+            node_id, inbound_id = row.get("node_id"), row.get("inbound_id")
+            if inbound_id is None:
+                result.append(row)
+                continue
+            if node_id not in metadata:
+                metadata[node_id] = (
+                    self.get_inbound_metadata(node_id) if self.get_inbound_metadata else {}
+                )
+            current = metadata[node_id].get(str(inbound_id), {})
+            previous = known.get((node_id, inbound_id), {})
+            filled = {
+                f: current.get(f) or previous.get(f)
+                for f in fields
+                if not row.get(f) and (current.get(f) or previous.get(f))
+            }
+            result.append({**row, **filled} if filled else row)
+        return result
+
     def _store_cache(self, data: List[Dict], generation: int) -> bool:
         """Store a refresh only when no successful mutation invalidated it."""
+        data = self._fill_inbound_fields(data)
         with self._cache_state_lock:
             if generation != self._cache_generation:
                 return False
