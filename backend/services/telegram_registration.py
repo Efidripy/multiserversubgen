@@ -1022,6 +1022,23 @@ class TelegramRegistrationService:
         self._registry.clear_service_notice_draft(user_id)
         return [self._admin_service_notice_message(chat_id)]
 
+    def _admin_node_add_choice(self, chat_id, customer_id, node_id, version, page):
+        node = next((item for item in self._registry.customer_node_matrix(customer_id) if item.node_id == node_id and item.state == "available_to_add"), None)
+        if node is None:
+            raise VersionConflictError("node is no longer available")
+        return TelegramOutboundMessage(chat_id, f"Добавить на ноду «{node.node_name}»?", {"inline_keyboard": [
+            [{"text": "✓ Добавить и сообщить", "callback_data": f"admin:cn-add:{customer_id}:{node_id}:{version}:{page}:1"}],
+            [{"text": "✓ Добавить без уведомления", "callback_data": f"admin:cn-add:{customer_id}:{node_id}:{version}:{page}:0"}],
+            [{"text": "Отмена", "callback_data": f"admin:customer:{customer_id}:{page}"}],
+        ]})
+
+    def _admin_node_add_queue(self, chat_id, user_id, parts):
+        customer_id, node_id, version, page = map(int, parts[2:6])
+        if len(parts) == 7 and parts[6] not in ("0", "1"):
+            raise ValueError("invalid notification flag")
+        self._registry.queue_customer_node_add(customer_id=customer_id, node_id=node_id, expected_customer_version=version, idempotency_key=f"telegram-admin-node-add:{version}:{customer_id}:{node_id}", created_by=f"telegram:{user_id}", notify=len(parts) == 6 or parts[6] == "1")
+        return [TelegramOutboundMessage(chat_id, "Добавление на ноду поставлено в очередь.", self._admin_customer_message(chat_id, customer_id, page).reply_markup)]
+
     def _handle_admin(
         self, *, user_id: int, chat_id: int, update_id: int, text: str | None, callback_data: str | None,
         message: dict[str, Any] | None = None
@@ -1587,23 +1604,12 @@ class TelegramRegistrationService:
                 if customer.row_version != version:
                     raise VersionConflictError("customer is stale")
                 if action == "add":
-                    node = next((item for item in self._registry.customer_node_matrix(customer_id) if item.node_id == node_id and item.state == "available_to_add"), None)
-                    if node is None:
-                        raise VersionConflictError("node is no longer available")
-                    return [TelegramOutboundMessage(chat_id, f"Добавить на ноду «{node.node_name}»?", {"inline_keyboard": [
-                        [{"text": "✓ Добавить и сообщить", "callback_data": f"admin:cn-add:{customer_id}:{node_id}:{version}:{page}:1"}],
-                        [{"text": "✓ Добавить без уведомления", "callback_data": f"admin:cn-add:{customer_id}:{node_id}:{version}:{page}:0"}],
-                        [{"text": "Отмена", "callback_data": f"admin:customer:{customer_id}:{page}"}],
-                    ]})]
+                    return [self._admin_node_add_choice(chat_id, customer_id, node_id, version, page)]
                 operation = f"{action}_node"
                 preview = self._registry.preview_customer_node_operation(customer_id=customer_id, node_id=node_id, operation_type=operation)
                 return [TelegramOutboundMessage(chat_id, f"Подтвердить действие на ноде {preview.targets[0].node_name}?", {"inline_keyboard": [[{"text": "✓ Подтвердить", "callback_data": f"admin:cn-confirm:{customer_id}:{node_id}:{action}:{version}:{page}"}], [{"text": "Отмена", "callback_data": f"admin:customer:{customer_id}:{page}"}]]})]
             if len(parts) in (6, 7) and parts[:2] == ["admin", "cn-add"]:
-                customer_id, node_id, version, page = map(int, parts[2:6])
-                if len(parts) == 7 and parts[6] not in ("0", "1"):
-                    raise ValueError("invalid notification flag")
-                self._registry.queue_customer_node_add(customer_id=customer_id, node_id=node_id, expected_customer_version=version, idempotency_key=f"telegram-admin-node-add:{version}:{customer_id}:{node_id}", created_by=f"telegram:{user_id}", notify=len(parts) == 6 or parts[6] == "1")
-                return [TelegramOutboundMessage(chat_id, "Добавление на ноду поставлено в очередь.", self._admin_customer_message(chat_id, customer_id, page).reply_markup)]
+                return self._admin_node_add_queue(chat_id, user_id, parts)
             if len(parts) in (6, 7) and parts[:2] == ["admin", "cn-confirm"]:
                 if len(parts) != 7:
                     raise VersionConflictError("customer card has no version")
