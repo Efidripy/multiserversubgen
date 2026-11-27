@@ -11,6 +11,11 @@ import {
 import { ThemeProvider } from '../src/contexts/ThemeContext';
 import '../src/i18n/config';
 
+vi.mock('../src/components/LazyJsonEditor', () => ({
+  LazyJsonEditor: ({ value, onChange, label, readOnly }: any) =>
+    <textarea aria-label={label} value={value} readOnly={readOnly} onChange={e => onChange(e.target.value)} />,
+}));
+
 const GIB = 1024 ** 3;
 
 describe('3x-ui v3 client DTO', () => {
@@ -66,149 +71,67 @@ describe('3x-ui v3 client DTO', () => {
     expect(client.telegram_linked).toBe(false);
   });
 
-  it('sends v3 security and byte quota without defaulting an unloaded limitIp to zero', async () => {
-    let requestBody: Record<string, unknown> | undefined;
+  const record = { id: 'client-id', email: 'alice@example.test', enable: true, totalGB: 50 * GIB,
+    security: 'none', expiryTime: 123456789, extra: { keep: true } };
+  const client = { id: 'client-id', email: 'alice@example.test', enable: true, up: 0, down: 0,
+    total: 3 * GIB, expiryTime: 0, node_id: 11, inbound_id: 17, protocol: 'vless', notes: 'old' };
+
+  function setup(conflict = false) {
+    const requests: { url: string; data: any }[] = [];
     api.defaults.adapter = async (config: any) => {
-      requestBody = typeof config.data === 'string' ? JSON.parse(config.data) : config.data;
-      return {
-        data: { success: true },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config,
-      };
-    };
-
-    render(
-      <ThemeProvider>
-        <ClientEditModal
-          client={{
-            id: 'client-id',
-            email: 'alice@example.test',
-            enable: true,
-            up: 1 * GIB,
-            down: 2 * GIB,
-            total: 3 * GIB,
-            totalGB: 50 * GIB,
-            expiryTime: 0,
-            node_id: 1,
-            inbound_id: 7,
-            protocol: 'vless',
-            security: 'auto',
-          }}
-          onClose={() => undefined}
-          onSaved={() => undefined}
-        />
-      </ThemeProvider>,
-    );
-
-    const numericInputs = document.querySelectorAll<HTMLInputElement>('input[type="number"]');
-    expect(numericInputs).toHaveLength(2);
-    expect(numericInputs[0].value).toBe('50');
-    expect(numericInputs[1].value).toBe('');
-
-    fireEvent.change(numericInputs[0], { target: { value: '75' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
-
-    await waitFor(() => expect(requestBody).toBeDefined());
-    const updates = (requestBody as any).updates;
-    expect(updates).toMatchObject({
-      email: 'alice@example.test',
-      totalGB: 75 * GIB,
-      security: 'auto',
-    });
-    expect(updates).not.toHaveProperty('encryption');
-    expect(updates).not.toHaveProperty('limitIp');
-  });
-
-  it('allows an explicit zero limitIp to be sent as the operator choice', async () => {
-    let requestBody: Record<string, unknown> | undefined;
-    api.defaults.adapter = async (config: any) => {
-      requestBody = typeof config.data === 'string' ? JSON.parse(config.data) : config.data;
-      return {
-        data: { success: true },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config,
-      };
-    };
-
-    render(
-      <ThemeProvider>
-        <ClientEditModal
-          client={{
-            id: 'client-id',
-            email: 'alice@example.test',
-            enable: true,
-            up: 0,
-            down: 0,
-            total: 0,
-            totalGB: 0,
-            expiryTime: 0,
-            node_id: 1,
-            inbound_id: 7,
-            protocol: 'trojan',
-          }}
-          onClose={() => undefined}
-          onSaved={() => undefined}
-        />
-      </ThemeProvider>,
-    );
-
-    const numericInputs = document.querySelectorAll<HTMLInputElement>('input[type="number"]');
-    fireEvent.change(numericInputs[1], { target: { value: '0' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
-
-    await waitFor(() => expect(requestBody).toBeDefined());
-    expect((requestBody as any).updates.limitIp).toBe(0);
-  });
-
-  it('sends reset-traffic identity in the JSON body from the edit modal', async () => {
-    let requestUrl = '';
-    let requestBody: Record<string, unknown> | undefined;
-    api.defaults.adapter = async (config: any) => {
-      requestUrl = config.url || '';
-      requestBody = typeof config.data === 'string' ? JSON.parse(config.data) : config.data;
-      return {
-        data: { success: true },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config,
-      };
+      if (config.method === 'get') return { data: { value: record }, status: 200, statusText: 'OK', headers: {}, config };
+      requests.push({ url: config.url, data: JSON.parse(config.data) });
+      if (conflict && config.url.endsWith('/record')) {
+        throw { response: { status: 409 } };
+      }
+      return { data: { success: true }, status: 200, statusText: 'OK', headers: {}, config };
     };
     vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<ThemeProvider><ClientEditModal client={client} onClose={() => undefined} onSaved={() => undefined} /></ThemeProvider>);
+    return requests;
+  }
 
-    render(
-      <ThemeProvider>
-        <ClientEditModal
-          client={{
-            id: 'client-id',
-            email: 'alice@example.test',
-            enable: true,
-            up: 0,
-            down: 0,
-            total: 3 * GIB,
-            totalGB: 50 * GIB,
-            expiryTime: 0,
-            node_id: 11,
-            inbound_id: 17,
-            protocol: 'vless',
-          }}
-          onClose={() => undefined}
-          onSaved={() => undefined}
-        />
-      </ThemeProvider>,
-    );
+  it('saves the exact record and expected without sending unchanged notes', async () => {
+    const requests = setup();
+    await screen.findByDisplayValue('alice@example.test');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toEqual({ url: '/v1/clients/client-id/record', data: {
+      node_id: 11, inbound_id: 17, value: record, expected: record,
+    } });
+  });
 
-    fireEvent.click(screen.getByTitle('Reset Traffic'));
+  it('synchronizes form and JSON and saves changed notes', async () => {
+    const requests = setup();
+    fireEvent.change(await screen.findByDisplayValue('alice@example.test'), { target: { value: 'new@example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: 'JSON' }));
+    const editor = await screen.findByLabelText('JSON');
+    const draft = JSON.parse((editor as HTMLTextAreaElement).value);
+    expect(draft.email).toBe('new@example.test');
+    draft.extra.keep = false;
+    fireEvent.change(editor, { target: { value: JSON.stringify(draft) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Form' }));
+    expect(screen.getByDisplayValue('new@example.test')).toBeTruthy();
+    fireEvent.change(screen.getByDisplayValue('old'), { target: { value: 'new note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[0].data).toEqual({ node_id: 11, inbound_id: 17, expected: record, value: draft });
+    expect(requests[1]).toEqual({ url: '/v1/clients/client-id/notes', data: {
+      node_id: 11, inbound_id: 17, email: 'new@example.test', notes: 'new note',
+    } });
+  });
 
-    await waitFor(() => expect(requestBody).toEqual({
-      node_id: 11,
-      inbound_id: 17,
-      email: 'alice@example.test',
-    }));
-    expect(requestUrl).toBe('/v1/clients/client-id/reset-traffic');
+  it('retains the draft after a conflict and blocks invalid JSON', async () => {
+    const requests = setup(true);
+    fireEvent.change(await screen.findByDisplayValue('alice@example.test'), { target: { value: 'draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText(/Client changed on node/);
+    expect(screen.getByDisplayValue('draft')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'JSON' }));
+    const editor = await screen.findByLabelText('JSON');
+    fireEvent.change(editor, { target: { value: '{' } });
+    expect((screen.getByRole('button', { name: 'Form' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(requests).toHaveLength(1);
   });
 });

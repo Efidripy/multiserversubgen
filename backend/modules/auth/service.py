@@ -299,6 +299,10 @@ class AuthService:
         """
         method = method.upper()
         path = path.lower()
+        if method in {"GET", "PUT"} and path.startswith("/api/v1/clients/") and path.endswith("/record"):
+            return "admin"
+        if method in {"GET", "PUT"} and path.startswith("/api/v1/inbounds/") and path.endswith("/config"):
+            return "admin"
         if path == "/api/v1/users" or path.startswith("/api/v1/users/"):
             return "admin"
         if path.startswith("/api/v1/subscription-client-settings"):

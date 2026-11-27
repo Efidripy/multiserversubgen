@@ -1,0 +1,7 @@
+/* Compact layout shared by every schema form: node operations and both edit drawers. */
+:is([data-node-operations], .drawer) .outbound-editor :is(label, summary, span) { font-size: 12px; }
+:is([data-node-operations], .drawer) .outbound-editor label > span { color: var(--text-secondary); }
+:is([data-node-operations], .drawer) .outbound-editor :is(.form-control, .form-select) { height: 32px; min-height: 32px; padding-block: 4px; line-height: 1.4; font-size: 13px; }
+:is([data-node-operations], .drawer) .outbound-editor textarea.form-control { height: auto; min-height: 80px; }
+:is([data-node-operations], .drawer) .outbound-editor summary { cursor: pointer; padding-block: 4px; }
+:is([data-node-operations], .drawer) .outbound-editor .btn { margin-block: 2px; margin-inline-end: 4px; }

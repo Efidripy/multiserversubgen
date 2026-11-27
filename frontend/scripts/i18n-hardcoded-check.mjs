@@ -38,6 +38,8 @@ function collectFiles(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      // Field labels here are Xray config terms, shown untranslated on purpose.
+      if (path.relative(ROOT, full) === path.normalize('src/components/outbound/schema')) continue;
       out.push(...collectFiles(full));
       continue;
     }

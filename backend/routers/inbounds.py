@@ -281,6 +281,41 @@ def build_inbounds_router(
             await run_in_threadpool(invalidate_live_stats_cache)
         return {"success": success}
 
+    @router.get("/api/v1/inbounds/{node_id}/{inbound_id}/config")
+    async def read_inbound_config(request: Request, node_id: int, inbound_id: int):
+        if not check_auth(request):
+            raise HTTPException(status_code=401)
+        node = await run_in_threadpool(get_node_or_404, node_id)
+        try:
+            value = await run_in_threadpool(inbound_mgr.read_edit_config, node, inbound_id)
+        except Exception:
+            raise HTTPException(status_code=502, detail="Unable to read inbound from node")
+        return ORJSONResponse(content=value, headers={"Cache-Control": "no-store"})
+
+    @router.put("/api/v1/inbounds/{node_id}/{inbound_id}/config")
+    async def replace_inbound_config(request: Request, node_id: int, inbound_id: int, data: Dict):
+        if not check_auth(request):
+            raise HTTPException(status_code=401)
+        node = await run_in_threadpool(get_node_or_404, node_id)
+        value, expected = data.get("value"), data.get("expected")
+        if not isinstance(value, dict) or not isinstance(expected, dict) or any(
+            not isinstance(value.get(key), dict) for key in ("settings", "streamSettings", "sniffing")
+        ):
+            raise HTTPException(status_code=400, detail="Invalid inbound configuration")
+        try:
+            success = await run_in_threadpool(inbound_mgr.replace_edit_config, node, inbound_id, value, expected)
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Node is read-only")
+        except RuntimeError:
+            raise HTTPException(status_code=409, detail="Inbound changed on node")
+        except Exception:
+            raise HTTPException(status_code=502, detail="Unable to update inbound on node")
+        if not success:
+            raise HTTPException(status_code=502, detail="Unable to update inbound on node")
+        await run_in_threadpool(invalidate_subscription_cache)
+        await run_in_threadpool(invalidate_live_stats_cache)
+        return ORJSONResponse(content={"success": True}, headers={"Cache-Control": "no-store"})
+
     @router.put("/api/v1/inbounds/{node_id}/{inbound_id}")
     async def update_inbound(request: Request, node_id: int, inbound_id: int, data: Dict):
         """Update a single inbound's configuration directly (port, remark, settings, etc.)."""

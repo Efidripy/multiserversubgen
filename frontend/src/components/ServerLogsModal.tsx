@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RefreshCw, X } from 'lucide-react';
 import { getNodeLogs, type NodeLogKind } from '../api/serverOps';
+import { highlightLog } from './logHighlight';
 
 type ServerLogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'err';
 
@@ -184,7 +185,7 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
             {lastUpdated && <span>{t('serverStatus.logsViewerLastUpdated', { time: lastUpdated })}</span>}
           </div>
           <pre role="log" aria-live="polite" className="min-h-[280px] flex-1 overflow-auto rounded-lg border border-cyan-500/15 bg-[#060a11] p-3 font-mono text-[11px] leading-5 text-gray-300 whitespace-pre-wrap break-words">
-            {error ? error : logs.length > 0 ? logs.join('\n') : loading ? '' : t('serverStatus.logsViewerNoEntries')}
+            {error ? error : logs.length > 0 ? highlightLog(logs.join('\n')) : loading ? '' : t('serverStatus.logsViewerNoEntries')}
           </pre>
         </div>
       </div>

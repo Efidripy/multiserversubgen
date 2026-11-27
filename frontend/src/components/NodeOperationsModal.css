@@ -23,3 +23,5 @@
 :root[data-design] [data-node-operations][data-node-operations] button.node-ops-selected {
   background: var(--accent); border-color: var(--accent); color: var(--accent-text);
 }
+
+/* Outbound form: compact like the rest of the panel. */
