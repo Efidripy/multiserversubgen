@@ -21,6 +21,7 @@ export function clientFields(protocol: string, record: object): FieldDef[] {
   if (['hysteria', 'hysteria2'].includes(protocol)) fields.push({ path: ['auth'], label: 'Auth', kind: 'text' });
   fields.push({ path: ['subId'], label: 'Subscription ID', kind: 'text', generate: 'password' });
   if (protocol === 'vless') {
+    fields.push({ path: ['security'], label: 'clients.vlessEncryption', kind: 'text' });
     fields.push({ path: ['flow'], label: 'Flow', kind: 'combobox', options: ['', 'xtls-rprx-vision'] });
   }
   if (protocol === 'vmess') fields.push({ path: ['security'], label: 'Security', kind: 'text' });
