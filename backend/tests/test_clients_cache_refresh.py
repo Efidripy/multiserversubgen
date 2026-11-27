@@ -64,10 +64,12 @@ def test_shared_refresh_prevents_duplicate_workers():
         entered.set()
         release.wait(5)
         done.set()
-    start = lambda key, fn: LiveStatsRuntime.start_cache_refresh(holder, key, fn)
-    start('clients', work)
+    def start():
+        LiveStatsRuntime.start_cache_refresh(holder, 'clients', work)
+
+    start()
     assert entered.wait(5)
-    start('clients', work)
+    start()
     release.set()
     assert done.wait(5)
     assert calls == [1]
