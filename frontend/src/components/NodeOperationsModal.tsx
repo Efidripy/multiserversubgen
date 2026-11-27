@@ -1,3 +1,4 @@
+import './NodeOperationsModal.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -33,8 +34,8 @@ export type NodeOpsTab =
   | 'outboundsConfig'
   | 'routing'
   | 'history'
-  | 'observatory'
   | 'config'
+  | 'observatory'
   | 'versions'
   | 'tokens'
   | 'keys'
@@ -59,29 +60,36 @@ interface ApiTokenItem {
 
 type KeyKind = 'uuid' | 'x25519' | 'vless' | 'mldsa65';
 
-const overlayClass = 'fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-3 py-5';
-const panelClass = 'flex h-[min(92vh,820px)] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-cyan-300/20 bg-[#0f1420] text-slate-100 shadow-2xl ring-1 ring-cyan-300/10';
-const panelHeaderClass = 'flex min-w-0 items-start justify-between gap-4 border-b border-cyan-300/20 px-4 py-4 sm:px-5';
+const overlayClass = 'fixed inset-0 z-50 flex items-center justify-center node-ops-overlay px-3 py-5';
+const panelClass = 'modal-content node-ops-panel flex h-[min(92vh,820px)] w-full max-w-6xl flex-col overflow-hidden';
+const panelHeaderClass = 'modal-header flex min-w-0 items-start justify-between gap-4 px-4 py-4';
 const panelBodyClass = 'flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row';
-const sideClass = 'max-h-[28%] min-w-0 shrink-0 overflow-y-auto border-b border-cyan-300/20 p-3 lg:max-h-none lg:w-[220px] lg:border-b-0 lg:border-r lg:p-4';
-const contentClass = 'flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4';
-const buttonBaseClass = 'inline-flex h-9 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-transparent px-3 text-xs font-medium uppercase tracking-[0.12em] transition disabled:cursor-not-allowed disabled:opacity-45';
-const buttonPrimaryClass = `${buttonBaseClass} border-cyan-300/25 bg-cyan-400 text-[#06111f] hover:bg-cyan-300`;
-const buttonSecondaryClass = `${buttonBaseClass} border-cyan-500/20 bg-[#0a0e1a] text-slate-300 hover:bg-[#101827] hover:text-cyan-200`;
-const buttonDangerClass = `${buttonBaseClass} border-rose-400/25 bg-rose-500 text-white hover:bg-rose-400`;
-const inputClass = 'h-9 min-w-0 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 font-mono text-xs font-light text-slate-100 outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10 placeholder:text-slate-600';
-const preClass = 'min-h-0 flex-1 overflow-auto rounded-lg border border-cyan-500/20 bg-[#07101d] p-3 font-mono text-xs leading-5 text-slate-200';
-const chipClass = 'inline-flex min-w-0 items-center gap-2 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-2 py-1 text-[11px] font-light text-slate-300';
+const sideClass = 'node-ops-side max-h-[28%] min-w-0 shrink-0 overflow-y-auto p-3 lg:max-h-none lg:w-[220px]';
+const contentClass = 'modal-body flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4';
+const buttonBaseClass = 'btn btn-sm';
+const buttonPrimaryClass = `${buttonBaseClass} btn-primary`;
+const buttonSecondaryClass = `${buttonBaseClass} btn-ghost-secondary`;
+const buttonDangerClass = `${buttonBaseClass} btn-danger`;
+const inputClass = 'form-control';
+const preClass = 'node-ops-pre min-h-0 flex-1 overflow-auto p-3 font-mono text-xs';
+const chipClass = 'node-ops-chip inline-flex min-w-0 items-center gap-2 px-2 py-1';
+
+const observatoryExample = `"metrics": { "tag": "metrics_out", "listen": "127.0.0.1:11111" },
+"observatory": {
+  "subjectSelector": ["outbound-tag"],
+  "probeURL": "https://www.google.com/generate_204",
+  "probeInterval": "1m"
+}`;
 
 const tabs: Array<{ id: NodeOpsTab; labelKey: string; icon: IconName }> = [
   { id: 'traffic', labelKey: 'nav.traffic', icon: 'traffic' },
   { id: 'online', labelKey: 'serverStatus.onlineClients', icon: 'clients' },
   { id: 'outbounds', labelKey: 'serverStatus.outboundTraffic', icon: 'upload' },
-  { id: 'observatory', labelKey: 'serverStatus.xrayObservatory', icon: 'statusOn' },
   { id: 'history', labelKey: 'nodeOps.history', icon: 'monitoring' },
   { id: 'outboundsConfig', labelKey: 'nodeOps.outbounds', icon: 'upload' },
   { id: 'routing', labelKey: 'nodeOps.routing', icon: 'note' },
   { id: 'config', labelKey: 'serverStatus.xrayConfig', icon: 'note' },
+  { id: 'observatory', labelKey: 'serverStatus.xrayObservatory', icon: 'statusOn' },
   { id: 'versions', labelKey: 'serverStatus.xrayVersionsTitle', icon: 'download' },
   { id: 'tokens', labelKey: 'serverStatus.apiTokensTitle', icon: 'attach' },
   { id: 'keys', labelKey: 'serverStatus.keyGenerator', icon: 'snowflake' },
@@ -348,7 +356,7 @@ export function NodeOperationsModal({
           </div>
         </div>
         <LazyJsonEditor readOnly label={activeTabLabel} value={text || ''} />
-        {!text && <span className="text-slate-200">{emptyLabel}</span>}
+        {!text && <span>{emptyLabel}</span>}
       </div>
     );
   };
@@ -357,7 +365,7 @@ export function NodeOperationsModal({
     <div className="space-y-4">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <select
-          className={`${inputClass} min-w-[220px]`}
+          className="form-select min-w-[220px]"
           value={selectedVersion}
           onChange={(event) => setSelectedVersion(event.target.value)}
           disabled={loadingTab === 'versions' || versions.length === 0}
@@ -374,7 +382,7 @@ export function NodeOperationsModal({
         </button>
       </div>
       {versions.length === 0 ? (
-        <div className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-8 text-center text-sm text-slate-500">
+        <div className="panel-block px-4 py-8 text-center text-sm">
           {loadingTab === 'versions' ? t('app.loading') : t('serverStatus.noVersionsAvailable')}
         </div>
       ) : (
@@ -384,7 +392,7 @@ export function NodeOperationsModal({
               key={version}
               type="button"
               aria-pressed={selectedVersion === version}
-              className={`${buttonSecondaryClass} justify-start ${selectedVersion === version ? 'border-cyan-300/50 bg-cyan-400/10 text-cyan-200' : ''}`}
+              className={`${buttonSecondaryClass} justify-start ${selectedVersion === version ? 'node-ops-selected' : ''}`}
               onClick={() => setSelectedVersion(version)}
             >
               <UIIcon name={selectedVersion === version ? 'check' : 'download'} size={14} />
@@ -415,39 +423,39 @@ export function NodeOperationsModal({
         </button>
       </div>
       {createdToken !== null && (
-        <div className="space-y-2 rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-3">
+        <div className="panel-block space-y-2 p-3">
           <div className="flex min-w-0 items-center justify-between gap-2">
-            <span className="text-xs font-medium uppercase tracking-[0.14em] text-emerald-200">{t('app.success')}</span>
+            <span className="text-xs node-ops-success">{t('app.success')}</span>
             <button type="button" className={buttonSecondaryClass} onClick={() => void copyValue(createdToken)}>
               <UIIcon name="copy" size={14} />
               {t('common.copy')}
             </button>
           </div>
-          <pre className="max-h-48 overflow-auto rounded-md bg-[#07101d] p-3 font-mono text-xs text-slate-200">{stringify(createdToken)}</pre>
+          <pre className="node-ops-pre max-h-48 overflow-auto p-3 font-mono text-xs">{stringify(createdToken)}</pre>
         </div>
       )}
       {tokens.length === 0 ? (
-        <div className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-8 text-center text-sm text-slate-500">
+        <div className="panel-block px-4 py-8 text-center text-sm">
           {loadingTab === 'tokens' ? t('app.loading') : t('serverStatus.noApiTokens')}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-cyan-500/20">
-          <table className="w-full table-fixed border-collapse text-left text-xs">
-            <thead className="bg-[#0a0e1a] text-[10px] uppercase tracking-wider text-slate-500">
+        <div className="overflow-auto">
+          <table className="table table-sm w-full">
+            <thead>
               <tr>
                 <th className="px-3 py-2">{t('common.name')}</th>
                 <th className="w-28 px-3 py-2">{t('common.status')}</th>
                 <th className="w-40 px-3 py-2 text-right">{t('common.actions')}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/70">
+            <tbody>
               {tokens.map((token, index) => {
                 const tokenId = tokenIdOf(token);
                 const tokenLabel = String(token.name || token.token || tokenId || `token-${index + 1}`);
                 return (
-                  <tr key={`${tokenId ?? index}:${tokenLabel}`} className="bg-[#0f1420]">
+                  <tr key={`${tokenId ?? index}:${tokenLabel}`}>
                     <td className="min-w-0 px-3 py-2">
-                      <span className="block truncate font-mono text-slate-200" title={tokenLabel}>{tokenLabel}</span>
+                      <span className="block truncate font-mono " title={tokenLabel}>{tokenLabel}</span>
                     </td>
                     <td className="px-3 py-2">
                       <span className={chipClass}>{token.enabled === false ? t('common.disabled') : t('common.enabled')}</span>
@@ -474,7 +482,7 @@ export function NodeOperationsModal({
 
   const renderKeys = () => (
     <div className="space-y-4">
-      <p className="text-sm text-slate-200">{t('nodeOps.keyExplanation')}</p>
+      <p className="text-sm ">{t('nodeOps.keyExplanation')}</p>
       <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
         {[
           { kind: 'uuid' as const, label: 'UUID' },
@@ -490,7 +498,7 @@ export function NodeOperationsModal({
           >
             <UIIcon name={keyLoading === item.kind ? 'spinner' : 'snowflake'} size={14} />
             {t('nodeOps.generateKey', { type: item.label })}
-          </button><p className="text-xs text-slate-400">{t(`nodeOps.keyHint_${item.kind}`)}</p></div>
+          </button><p className="text-xs node-ops-muted">{t(`nodeOps.keyHint_${item.kind}`)}</p></div>
         ))}
       </div>
       {generatedKey ? (
@@ -505,7 +513,7 @@ export function NodeOperationsModal({
           <pre className={preClass}>{stringify(generatedKey.value)}</pre>
         </div>
       ) : (
-        <div className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-8 text-center text-sm text-slate-500">
+        <div className="panel-block px-4 py-8 text-center text-sm">
           {t('serverStatus.keyGenerator')}
         </div>
       )}
@@ -539,10 +547,10 @@ export function NodeOperationsModal({
       <div className={panelClass}>
         <div className={panelHeaderClass}>
           <div className="min-w-0">
-            <h3 className="truncate text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">{activeTabLabel}</h3>
-            <p className="mt-1 truncate font-mono text-xs text-slate-500">{nodeName} / #{nodeId}</p>
+            <h3 className="modal-title truncate">{activeTabLabel}</h3>
+            <p className="mt-1 truncate font-mono text-xs node-ops-muted">{nodeName} / #{nodeId}</p>
           </div>
-          <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] text-slate-300 hover:text-cyan-200" onClick={onClose} aria-label={t('common.close')}>
+          <button type="button" className="btn btn-sm btn-ghost-secondary" onClick={onClose} aria-label={t('common.close')}>
             <UIIcon name="x" size={15} />
           </button>
         </div>
@@ -555,7 +563,7 @@ export function NodeOperationsModal({
                   key={tab.id}
                   type="button"
                   aria-current={activeTab === tab.id ? 'page' : undefined}
-                  className={`${buttonSecondaryClass} justify-start ${activeTab === tab.id ? 'border-cyan-300/50 bg-cyan-400/10 text-cyan-200' : ''}`}
+                  className={`${buttonSecondaryClass} justify-start ${activeTab === tab.id ? 'node-ops-selected' : ''}`}
                   onClick={() => setActiveTab(tab.id)}
                 >
                   <UIIcon name={tab.icon} size={14} />
@@ -567,7 +575,7 @@ export function NodeOperationsModal({
 
           <main className={contentClass}>
             {error && (
-              <div className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+              <div className="node-ops-error mb-4 text-sm">
                 {error}
               </div>
             )}
@@ -575,8 +583,9 @@ export function NodeOperationsModal({
             {activeTab === 'history' ? <SystemHistory nodeId={nodeId} />
               : activeTab === 'outboundsConfig' ? <XrayTemplateEditor key="outbounds" nodeId={nodeId} section="outbounds" />
               : activeTab === 'routing' ? <XrayTemplateEditor key="routing" nodeId={nodeId} section="routing" />
-              : activeTab === 'config' ? <div className="flex min-h-0 flex-1 flex-col gap-3"><div className="flex flex-wrap gap-2">{(['template', 'running'] as const).map((mode) => <button type="button" key={mode} aria-pressed={configMode === mode} className={buttonSecondaryClass} onClick={() => setConfigMode(mode)}>{t(`nodeOps.${mode}`)}</button>)}</div>{configMode === 'template' ? <XrayTemplateEditor nodeId={nodeId} section="all" /> : renderJsonPanel(activeData, t('common.noRecordsFound'))}</div>
+              : activeTab === 'config' ? <div className="flex min-h-0 flex-1 flex-col gap-3"><div className="flex flex-wrap gap-2">{(['template', 'running'] as const).map((mode) => <button type="button" key={mode} aria-pressed={configMode === mode} className={`seg-tab ${configMode === mode ? 'seg-tab--active' : ''}`} onClick={() => setConfigMode(mode)}>{t(`nodeOps.${mode}`)}</button>)}</div>{configMode === 'template' ? <XrayTemplateEditor nodeId={nodeId} section="all" /> : renderJsonPanel(activeData, t('common.noRecordsFound'))}</div>
               : activeTab === 'traffic' || activeTab === 'online' || activeTab === 'outbounds' ? <NodeDataView key={activeTab} nodeId={nodeId} kind={activeTab} data={activeData} loading={loadingTab === activeTab} refresh={() => void loadTab(activeTab, true)} copy={() => void copyValue(activeData)} />
+              : activeTab === 'observatory' ? <div className="flex min-h-0 flex-1 flex-col gap-3"><div className="panel-block p-3 text-sm"><p>{t('nodeOps.observatoryHint')}</p><pre className="node-ops-pre mt-2 overflow-auto p-2 font-mono text-xs">{observatoryExample}</pre></div>{renderJsonPanel(activeData, t('common.noRecordsFound'))}</div>
               : activeTab === 'versions' ? renderVersions()
               : activeTab === 'tokens' ? renderTokens()
                 : activeTab === 'keys' ? renderKeys()

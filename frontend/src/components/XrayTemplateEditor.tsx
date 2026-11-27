@@ -44,13 +44,13 @@ export function XrayTemplateEditor({ nodeId, section }: { nodeId: number; sectio
   };
   return <div className="flex min-h-0 flex-1 flex-col gap-3">
     <div className="flex flex-wrap gap-2">
-      {section === 'routing' && <><button type="button" className="node-ops-toggle" aria-pressed={mode === 'table'} disabled={!valid || ((value as any)?.rules !== undefined && !Array.isArray((value as any)?.rules))} onClick={() => setMode('table')}>{t('nodeOps.table')}</button><button type="button" className="node-ops-toggle" aria-pressed={mode === 'json'} onClick={() => setMode('json')}>JSON</button></>}
-      <button type="button" className="rounded border border-cyan-500/30 px-3 py-2 text-xs text-slate-200 disabled:opacity-40" disabled={busy || !valid || !routingValid || text === original || !original} onClick={() => void save()}>{t('nodeOps.saveApply')}</button>
-      <button type="button" className="rounded border border-cyan-500/30 px-3 py-2 text-xs text-slate-200" disabled={busy} onClick={() => void reload()}>{t('nodeOps.reload')}</button>
-      <button type="button" className="rounded border border-cyan-500/30 px-3 py-2 text-xs text-slate-200" onClick={() => void navigator.clipboard.writeText(text).catch(() => setError(t('serverStatus.clipboardUnavailable')))}>{t('common.copy')}</button>
+      {section === 'routing' && <><button type="button" className={`seg-tab ${mode === 'table' ? 'seg-tab--active' : ''}`} aria-pressed={mode === 'table'} disabled={!valid || ((value as any)?.rules !== undefined && !Array.isArray((value as any)?.rules))} onClick={() => setMode('table')}>{t('nodeOps.table')}</button><button type="button" className={`seg-tab ${mode === 'json' ? 'seg-tab--active' : ''}`} aria-pressed={mode === 'json'} onClick={() => setMode('json')}>JSON</button></>}
+      <button type="button" className="btn btn-sm btn-primary" disabled={busy || !valid || !routingValid || text === original || !original} onClick={() => void save()}>{t('nodeOps.saveApply')}</button>
+      <button type="button" className="btn btn-sm btn-ghost-secondary" disabled={busy} onClick={() => void reload()}>{t('nodeOps.reload')}</button>
+      <button type="button" className="btn btn-sm btn-ghost-secondary" onClick={() => void navigator.clipboard.writeText(text).catch(() => setError(t('serverStatus.clipboardUnavailable')))}>{t('common.copy')}</button>
     </div>
-    {(error || parseError || (text && !valid ? t('nodeOps.invalidShape') : '')) && <div role="alert" className="text-sm text-rose-300">{error || parseError || t('nodeOps.invalidShape')}</div>}
+    {(error || parseError || (text && !valid ? t('nodeOps.invalidShape') : '')) && <div role="alert" className="text-sm node-ops-error">{error || parseError || t('nodeOps.invalidShape')}</div>}
     {section === 'routing' && mode === 'table' && valid && ((value as any)?.rules === undefined || Array.isArray((value as any)?.rules)) ? <RoutingTable value={value as Record<string, any>} onChange={(next) => setText(JSON.stringify(next, null, 2))} /> : <LazyJsonEditor label={t('nodeOps.template')} value={text} onChange={setText} readOnly={busy || !original} />}
-    {section === 'routing' && original && valid && !routingValid && <div role="alert" className="text-rose-300">{t('nodeOps.protectedRule')}</div>}
+    {section === 'routing' && original && valid && !routingValid && <div role="alert" className="node-ops-error">{t('nodeOps.protectedRule')}</div>}
   </div>;
 }

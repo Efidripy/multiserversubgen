@@ -1931,6 +1931,8 @@
   }
 },
   "nodeOps": {
+    "observatoryHint": "Observatory регулярно проверяет выбранные outbound и показывает, жив ли каждый и какая у него задержка. По умолчанию выключено: добавьте эти два блока в Xray Config (Template). В subjectSelector перечислите начала тегов проверяемых outbound. После сохранения Xray может перезапуститься.",
+    "showValues": "Показать все значения: {{count}}",
     "editorLoading": "Загрузка редактора кода…",
     "jsonView": "Просмотр JSON",
     "invalidRule": "Правило должно содержать outbound или balancer и хотя бы одно условие.",

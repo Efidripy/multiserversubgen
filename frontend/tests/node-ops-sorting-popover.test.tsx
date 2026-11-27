@@ -1,0 +1,42 @@
+﻿import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock('../src/api/serverOps', () => ({ getXrayTemplate: vi.fn().mockResolvedValue({}), updateXrayTemplate: vi.fn() }));
+vi.mock('../src/components/LazyJsonEditor', () => ({ LazyJsonEditor: () => null }));
+import { NodeDataView } from '../src/components/NodeDataView';
+import { RoutingTable } from '../src/components/RoutingTable';
+afterEach(cleanup);
+it('sorts traffic numerically and preserves selection on refresh', () => {
+  const props = { nodeId: 1, kind: 'traffic' as const, loading: false, refresh: vi.fn(), copy: vi.fn() };
+  const data = { clients: [{ email: 'alpha', download: 2, total: 2 }, { email: 'beta', download: 10, total: 10 }], traffic: [{ remark: 'first', total: 1 }, { remark: 'second', total: 3 }] };
+  const view = render(<NodeDataView {...props} data={data} />); const tables = screen.getAllByRole('table');
+  expect(within(tables[0]).getAllByRole('row')[1].textContent).toContain('beta');
+  fireEvent.click(within(tables[0]).getByRole('button', { name: 'traffic.download' }));
+  fireEvent.click(within(tables[0]).getByRole('button', { name: /traffic.download/ }));
+  expect(within(tables[0]).getAllByRole('row')[1].textContent).toContain('alpha');
+  expect(within(tables[0]).getByRole('columnheader', { name: /traffic.download/ }).getAttribute('aria-sort')).toBe('ascending');
+  fireEvent.click(within(tables[1]).getByRole('button', { name: /traffic.total/ }));
+  expect(within(tables[1]).getAllByRole('row')[1].textContent).toContain('first');
+  view.rerender(<NodeDataView {...props} data={data} />);
+  expect(within(tables[0]).getAllByRole('row')[1].textContent).toContain('alpha');
+  fireEvent.change(screen.getByPlaceholderText('nodeOps.search'), { target: { value: 'beta' } });
+  expect(within(tables[0]).getAllByRole('row')).toHaveLength(2);
+});
+it('shows mixed routing values in a portal and closes on escape or outside tap', () => {
+  render(<RoutingTable value={{ rules: [{ domain: ['one', 'two'], ip: ['127.0.0.1'], outboundTag: 'direct' }] }} onChange={vi.fn()} />);
+  const trigger = screen.getByRole('button', { name: 'nodeOps.showValues' }); fireEvent.mouseEnter(trigger);
+  expect(screen.getByText('two').parentElement?.className).toBe('node-ops-popover');
+  expect(screen.getByText('ip:')).toBeTruthy(); fireEvent.keyDown(document, { key: 'Escape' });
+  expect(screen.queryByText('two')).toBeNull(); fireEvent.click(trigger); fireEvent.pointerDown(document.body);
+  expect(screen.queryByText('two')).toBeNull();
+});
+it('sorts outbound traffic and filters the sorted results', () => {
+  render(<NodeDataView nodeId={1} kind="outbounds" data={[{ tag: 'a', up: 2, down: 0 }, { tag: 'b', up: 10, down: 0 }]} loading={false} refresh={vi.fn()} copy={vi.fn()} />);
+  const table = screen.getByRole('table');
+  expect(within(table).getAllByRole('row')[1].textContent).toContain('b');
+  fireEvent.click(within(table).getByRole('button', { name: 'traffic.upload' }));
+  fireEvent.click(within(table).getByRole('button', { name: /traffic.upload/ }));
+  expect(within(table).getAllByRole('row')[1].textContent).toContain('a');
+  fireEvent.change(screen.getByPlaceholderText('nodeOps.search'), { target: { value: 'b' } });
+  expect(within(table).getAllByRole('row')).toHaveLength(2);
+});

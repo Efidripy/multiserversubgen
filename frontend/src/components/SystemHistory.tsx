@@ -15,9 +15,14 @@ const names: Record<string, string> = {
 };
 type Group = keyof typeof groups;
 type Point = { t: number; v: number };
-const colors = ['#22d3ee', '#fb7185', '#a78bfa'];
+
 export function SystemHistory({ nodeId }: { nodeId: number }) {
   const { t, i18n } = useTranslation();
+  const [palette, setPalette] = useState(() => ['','','','','']);
+  useEffect(() => {
+    const update = () => { const style = getComputedStyle(document.documentElement); setPalette(['--accent', '--success', '--warning', '--text-secondary', '--border-color'].map((name) => style.getPropertyValue(name).trim())); };
+    update(); const observer = new MutationObserver(update); observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'data-design', 'class'] }); return () => observer.disconnect();
+  }, []);
   const [group, setGroup] = useState<Group>('cpu');
   const [bucket, setBucket] = useState(2);
   const [series, setSeries] = useState<Point[][]>([]);
@@ -56,9 +61,9 @@ export function SystemHistory({ nodeId }: { nodeId: number }) {
   };
   const labels = timestamps.map((stamp) => new Date(stamp * 1000).toLocaleString(i18n.language, 60 >= bucket ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }));
   return <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto">
-    <select aria-label={t('nodeOps.interval')} className="rounded border border-cyan-500/30 bg-[#0a0e1a] p-2 text-slate-200" value={bucket} onChange={(e) => setBucket(Number(e.target.value))}>{[[2,'2m'],[60,'1h'],[180,'3h'],[360,'6h'],[720,'12h'],[1440,'24h'],[2880,'2d'],[10080,'7d']].map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select>
-    <div className="flex flex-wrap gap-2">{(Object.keys(groups) as Group[]).map((key) => <button type="button" key={key} aria-pressed={group === key} className={`rounded border border-cyan-500/30 px-3 py-2 text-xs text-slate-200 ${group === key ? 'bg-cyan-400/20' : ''}`} onClick={() => setGroup(key)}>{t(`nodeOps.${key}`)}</button>)}</div>
-    {error && <div role="alert" className="text-rose-300">{error}</div>}
-    <div className="relative min-h-[180px] min-w-0 flex-1"><Line data={{ labels, datasets: groups[group].map((metric, index) => ({ label: names[metric], data: timestamps.map((stamp) => series[index]?.find((p) => p.t === stamp)?.v ?? null), borderColor: colors[index], backgroundColor: colors[index], pointRadius: 0, tension: 0.2 })) }} options={{ responsive: true, maintainAspectRatio: false, animation: false, scales: { x: { ticks: { color: '#94a3b8', maxTicksLimit: 6, maxRotation: 0 }, grid: { display: false } }, y: { grid: { color: 'rgba(148,163,184,0.15)' }, ...(percent ? { min: 0, max: 100 } : {}), ticks: { color: '#94a3b8', callback: (v) => format(Number(v)) } } }, plugins: { legend: { labels: { color: '#cbd5e1', boxWidth: 12 } }, tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${format(ctx.parsed.y ?? 0)}` } } } }} /></div>
+    <select aria-label={t('nodeOps.interval')} className="form-select w-auto self-start" value={bucket} onChange={(e) => setBucket(Number(e.target.value))}>{[[2,'2m'],[60,'1h'],[180,'3h'],[360,'6h'],[720,'12h'],[1440,'24h'],[2880,'2d'],[10080,'7d']].map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select>
+    <div className="flex flex-wrap gap-2">{(Object.keys(groups) as Group[]).map((key) => <button type="button" key={key} aria-pressed={group === key} className={`seg-tab ${group === key ? 'seg-tab--active' : ''}`} onClick={() => setGroup(key)}>{t(`nodeOps.${key}`)}</button>)}</div>
+    {error && <div role="alert" className="node-ops-error">{error}</div>}
+    <div className="relative min-h-[180px] min-w-0 flex-1"><Line data={{ labels, datasets: groups[group].map((metric, index) => ({ label: names[metric], data: timestamps.map((stamp) => series[index]?.find((p) => p.t === stamp)?.v ?? null), borderColor: palette[index], backgroundColor: palette[index], pointRadius: 0, tension: 0.2 })) }} options={{ responsive: true, maintainAspectRatio: false, animation: false, scales: { x: { ticks: { color: palette[3], maxTicksLimit: 6, maxRotation: 0 }, grid: { display: false } }, y: { grid: { color: palette[4] }, ...(percent ? { min: 0, max: 100 } : {}), ticks: { color: palette[3], callback: (v) => format(Number(v)) } } }, plugins: { legend: { labels: { color: palette[3], boxWidth: 12 } }, tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${format(ctx.parsed.y ?? 0)}` } } } }} /></div>
   </div>;
 }
