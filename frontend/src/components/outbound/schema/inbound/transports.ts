@@ -1,3 +1,4 @@
+import { deletePath, setPath } from '../../paths';
 import type { FieldDef } from '../../types';
 import { array, field, section } from './common';
 
@@ -6,7 +7,7 @@ const f = (base: string, key: string, kind: FieldDef['kind'] = 'text', options?:
 const network = (names: string[]) => (o: Record<string, any>) => names.includes(o.streamSettings?.network || 'tcp');
 const raw = (key: string, kind: FieldDef['kind'] = 'text') => f('tcp', key, kind);
 export const transportFields: FieldDef[] = [
-  field('streamSettings.network', 'combobox', ['tcp', 'raw', 'kcp', 'ws', 'grpc', 'httpupgrade', 'xhttp', 'hysteria']),
+  field('streamSettings.network', 'combobox', ['tcp', 'raw', 'kcp', 'ws', 'grpc', 'httpupgrade', 'xhttp', 'xdrive', 'hysteria']),
   section('tcp / raw', [raw('acceptProxyProtocol', 'boolean'), f('tcp', 'header.type', 'select', ['none', 'http']),
     raw('header.request.version'), raw('header.request.method'), raw('header.request.path', 'list'),
     raw('header.request.headers', 'json'), raw('header.response.version'), raw('header.response.status'),
@@ -29,10 +30,32 @@ export const transportFields: FieldDef[] = [
     ...['scMaxBufferedPosts', 'serverMaxHeaderBytes', 'uplinkChunkSize'].map(k => f('xhttp', k, 'number')),
     ...['xPaddingObfsMode', 'noSSEHeader', 'noGRPCHeader'].map(k => f('xhttp', k, 'boolean')),
     f('xhttp', 'headers', 'json'),
+    { ...f('xhttp', 'enableXmux', 'boolean'), uiOnly: true,
+      read: (_, value) => value.streamSettings?.xhttpSettings?.xmux !== undefined,
+      onChange: (value, enabled) => enabled
+        ? setPath(value, ['streamSettings', 'xhttpSettings', 'xmux'], {})
+        : deletePath(value, ['streamSettings', 'xhttpSettings', 'xmux']) },
     ...['maxConcurrency', 'maxConnections', 'cMaxReuseTimes', 'hMaxRequestTimes', 'hMaxReusableSecs',
       'hKeepAlivePeriod'].map(k => f('xhttp', `xmux.${k}`)),
     f('xhttp', 'h2Params', 'json'), f('xhttp', 'downloadSettings', 'json'),
   ], network(['xhttp'])),
+  section('masque', [f('masque', 'path')], o => o.protocol === 'masque'),
+  section('xdrive', [
+    f('xdrive', 'service', 'combobox', ['google-drive', 'local', 'template', 's3']),
+    f('xdrive', 'remoteFolder'),
+    f('xdrive', 'secrets', 'lineList'),
+    f('xdrive', 'key'),
+    f('xdrive', 'template', 'json'),
+    f('xdrive', 's3.endpoint'),
+    f('xdrive', 's3.region'),
+    f('xdrive', 's3.bucket'),
+    f('xdrive', 's3.pathStyle', 'boolean'),
+    ...['segmentBytes', 'flushIntervalMs', 'pollIntervalMs', 'maxPollIntervalMs', 'sessionTtlSeconds',
+      'concurrency', 'eagerWindowMs', 'holeTimeoutMs'].map(k => f('xdrive', k, 'number')),
+    f('xdrive', 'xmux', 'json'),
+    field('streamSettings.address'),
+    field('streamSettings.port', 'number'),
+  ], network(['xdrive'])),
   section('hysteria', [f('hysteria', 'version', 'number'), f('hysteria', 'auth'),
     f('hysteria', 'udpIdleTimeout', 'number'), f('hysteria', 'masquerade.type'), f('hysteria', 'masquerade.url'),
     f('hysteria', 'masquerade.rewriteHost', 'boolean'), f('hysteria', 'masquerade.xForwarded', 'boolean'),

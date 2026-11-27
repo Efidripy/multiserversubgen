@@ -97,6 +97,9 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
         change({ ...current, [name]: '' }); }}>{t('nodeOps.arrayAdd')}</button></div>;
     if (field.kind === 'json') return <label key={key} className="flex flex-col gap-1"><span>{t(field.label)}</span>
       <JsonField value={current} onChange={change} label={t(field.label)} /></label>;
+    if (field.kind === 'lineList') return <label key={key} className="flex flex-col gap-1"><span>{t(field.label)}</span>
+      <textarea className="form-control" value={Array.isArray(current) ? current.join('\n') : ''}
+        onChange={event => change(event.target.value.split(/\r?\n/))} /></label>;
     if (field.kind === 'boolean') return <label key={key}><input type="checkbox" checked={current === true}
       onChange={event => change(event.target.checked)} /> {t(field.label)}</label>;
     if (field.kind === 'select') return <label key={key} className="flex flex-col gap-1"><span>{t(field.label)}</span>
@@ -108,7 +111,7 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
     const id = `options-${key}`;
     return <label key={key} className="flex flex-col gap-1"><span>{t(field.label)}</span>
       <input className="form-control" list={field.kind === 'combobox' ? id : undefined} placeholder={field.placeholder}
-        type={field.kind === 'number' ? 'number' : 'text'} value={Array.isArray(current) ? current.join(', ') : current ?? ''}
+        type={field.kind === 'number' ? 'number' : field.kind === 'datetime' ? 'datetime-local' : 'text'} value={Array.isArray(current) ? current.join(', ') : current ?? ''}
         onChange={event => {
           const input = event.target.value;
           if (field.kind === 'list' || field.kind === 'numberList') {

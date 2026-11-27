@@ -1,3 +1,4 @@
+import { deletePath, setPath } from '../../paths';
 import type { FieldDef } from '../../types';
 import { array, field, section } from './common';
 
@@ -6,8 +7,24 @@ const f = (base: string, key: string, kind: FieldDef['kind'] = 'text') =>
 export const securityFields: FieldDef[] = [
   field('streamSettings.security', 'select', ['none', 'tls', 'reality']),
   section('tls', [
-    array('streamSettings.tlsSettings.certificates', [field('certificateFile'), field('keyFile'),
-      field('certificate', 'list'), field('key', 'list'), field('ocspStapling', 'number'),
+    array('streamSettings.tlsSettings.certificates', [
+      { ...field('certificateMode', 'select', ['files', 'contents']), uiOnly: true,
+        read: (_, value, path) => {
+          const cert = path.slice(0, -1).reduce((item, key) => item?.[key], value);
+          return cert?.certificate !== undefined || cert?.key !== undefined ? 'contents' : 'files';
+        },
+        onChange: (value, mode, path) => {
+          const base = path.slice(0, -1);
+          const remove = mode === 'files' ? ['certificate', 'key'] : ['certificateFile', 'keyFile'];
+          let next = value;
+          for (const key of remove) next = deletePath(next, [...base, key]);
+          return setPath(next, [...base, mode === 'files' ? 'certificateFile' : 'certificate'], mode === 'files' ? '' : []);
+        } },
+      { ...field('certificateFile'), showIf: (_, c) => c?.value?.certificate === undefined && c?.value?.key === undefined },
+      { ...field('keyFile'), showIf: (_, c) => c?.value?.certificate === undefined && c?.value?.key === undefined },
+      { ...field('certificate', 'lineList'), showIf: (_, c) => c?.value?.certificate !== undefined || c?.value?.key !== undefined },
+      { ...field('key', 'lineList'), showIf: (_, c) => c?.value?.certificate !== undefined || c?.value?.key !== undefined },
+      field('ocspStapling', 'number'),
       field('oneTimeLoading', 'boolean'), field('usage', 'combobox', ['encipherment', 'verify', 'issue']),
       field('buildChain', 'boolean')]),
     ...['serverName', 'cipherSuites', 'minVersion', 'maxVersion', 'echServerKeys', 'masterKeyLog',

@@ -6,9 +6,13 @@ import { field } from './common';
 const adapt = (entry: FieldDef): FieldDef => {
   const result: FieldDef = { ...entry, onChange: undefined, defaults: entry.kind === 'array' ? (Array.isArray(entry.defaults) ? [] : {}) : undefined,
     fields: entry.fields?.filter(child => !child.uiOnly).map(adapt) };
-  if (entry.path instanceof Array && entry.path.join('.') === 'type' && entry.options instanceof Array) {
-    result.options = [...entry.options.filter(option => option !== 'udphop'), 'filter'];
+
+  if (entry.path instanceof Array && ['streamSettings.finalmask.tcp', 'streamSettings.finalmask.udp']
+    .includes(entry.path.join('.'))) {
+    const selector = result.fields?.find(child => Array.isArray(child.path) && child.path.join('.') === 'type');
+    if (selector && Array.isArray(selector.options)) selector.options = [...selector.options.filter(o => o !== 'udphop'), 'filter'];
   }
+  if (entry.path instanceof Array && entry.path.join('.') === 'settings.packetSize') result.showIf = undefined;
   if (entry.path instanceof Array && entry.path.join('.') === 'streamSettings.finalmask.tcp') {
     result.fields = [...(result.fields || []),
       { ...field('settings.allowedSourceIPs', 'list'), showIf: (_, c) => c?.value?.type === 'filter' },

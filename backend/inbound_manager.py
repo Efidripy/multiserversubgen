@@ -593,7 +593,15 @@ class InboundManager:
             return False
     
     
-    _EDIT_FIELDS = ("remark", "enable", "listen", "port", "protocol", "settings", "streamSettings", "sniffing")
+    _EDIT_FIELDS = (
+        "remark", "enable", "listen", "port", "protocol", "settings", "streamSettings", "sniffing",
+        "total", "expiryTime", "trafficReset", "trafficResetDay", "tag", "shareAddrStrategy", "shareAddr",
+        "subSortIndex",
+    )
+    _OPTIONAL_EDIT_FIELDS = (
+        "total", "expiryTime", "trafficReset", "trafficResetDay", "tag", "shareAddrStrategy", "shareAddr",
+        "subSortIndex",
+    )
 
     @classmethod
     def _edit_projection(cls, current: Dict) -> Dict:
@@ -640,6 +648,8 @@ class InboundManager:
             raise RuntimeError("Inbound changed on node")
         payload = copy.deepcopy(current)
         for key in self._EDIT_FIELDS:
+            if key in self._OPTIONAL_EDIT_FIELDS and key not in current:
+                continue
             if key not in value:
                 payload.pop(key, None)
                 continue

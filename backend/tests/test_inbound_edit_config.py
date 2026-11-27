@@ -72,3 +72,20 @@ def test_config_conflict_response():
     config = {"settings": {}, "streamSettings": {}, "sniffing": {}}
     response = TestClient(app).put('/api/v1/inbounds/2/1/config', json={"value": config, "expected": config})
     assert response.status_code == 409
+
+
+def test_optional_edit_fields_follow_node_presence(monkeypatch):
+    current = {"settings": "{}", "streamSettings": "{}", "sniffing": "{}", "total": 1073741824, "tag": "old"}
+    manager = InboundManager(lambda x: x)
+    sent = []
+    monkeypatch.setattr(manager, "_edit_session", lambda node: (object(), "http://node"))
+    monkeypatch.setattr(manager, "_edit_read", lambda session, url, inbound_id: copy.deepcopy(current))
+    monkeypatch.setattr(manager, "_xui_success", lambda response: True)
+    monkeypatch.setattr("inbound_manager.xui_request", lambda *args, **kwargs: sent.append(kwargs["json"]) or Response())
+    expected = manager.read_edit_config({}, 1)
+    assert expected["total"] == 1073741824 and expected["tag"] == "old"
+    assert "expiryTime" not in expected
+    value = {**expected, "tag": "new", "expiryTime": 123}
+    assert manager.replace_edit_config({}, 1, value, expected)
+    assert sent[0]["tag"] == "new" and sent[0]["total"] == 1073741824
+    assert "expiryTime" not in sent[0]

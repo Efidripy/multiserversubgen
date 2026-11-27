@@ -7,6 +7,25 @@ const fallbacks = () => array('settings.fallbacks', [
   field('name'), field('alpn'), field('path'), field('dest', 'json'), field('xver', 'number'),
 ]);
 export const protocolFields: FieldDef[] = [
+  section('masque', [settings('address', 'list'), settings('mtu', 'number')], o => o.protocol === 'masque'),
+  section('amneziawg', [
+    ...['privateKey', 'subnetIp', 'primaryDns', 'secondaryDns', 'externalInterface', 'ipv6Subnet',
+      'ipv6ExternalInterface', 'h1', 'h2', 'h3', 'h4', 'i1', 'i2', 'i3', 'i4', 'i5', 'headerProtectionKey',
+      'contentPaddingAddition', 'rekeyAfterTime', 'rekeyTimeout', 'rejectAfterTime', 'keepaliveTimeout',
+      'maxHandshakeAttempts'].map(name => settings(`server.${name}`)),
+    ...['subnetCidr', 'mtu', 'jc', 'jmin', 'jmax', 's1', 's2', 's3', 's4']
+      .map(name => settings(`server.${name}`, 'number')),
+    ...['ipv6Enabled', 'randomTrailers', 'disableCookies', 'kernelMode']
+      .map(name => settings(`server.${name}`, 'boolean')),
+  ], o => o.protocol === 'amneziawg'),
+  section('tuic', [
+    ...['certificate', 'private_key', 'sni', 'log_level', 'congestion_control', 'udp_relay_mode']
+      .map(name => settings(`server.${name}`)),
+    ...['max_idle_time', 'authentication_timeout', 'max_udp_relay_packet_size']
+      .map(name => settings(`server.${name}`, 'number')),
+    settings('server.zero_rtt_handshake', 'boolean'),
+    settings('server.alpn', 'list'),
+  ], o => o.protocol === 'tuic'),
   section('vless', [settings('decryption'), settings('encryption'), settings('testseed', 'numberList'), fallbacks()],
     o => o.protocol === 'vless'),
   section('trojan', [fallbacks()], o => o.protocol === 'trojan'),
