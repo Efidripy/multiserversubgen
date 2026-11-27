@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import './SchemaForm.css';
 import { deletePath, getPath, setPath } from './paths';
 import type { FieldDef, ItemContext, Outbound, Path } from './types';
+import { choiceField } from './schema/choices';
 
 type Props = { value: Outbound; fields: FieldDef[]; onChange: (value: Outbound) => void; context?: ItemContext };
 
@@ -57,6 +58,36 @@ function Generator({ kind, onChange }: { kind: NonNullable<FieldDef['generate']>
     {publicKey && <output>Public Key: {publicKey}</output>}</span>;
 }
 
+function Choice({ current, options, custom, numeric, label, onChange }: {
+  current: unknown; options: string[]; custom: boolean; numeric: boolean; label: string; onChange: (v: unknown) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const customLabel = useCustomLabel(label);
+  const text = current == null ? '' : String(current);
+  const other = custom && (editing || (!!text && !options.includes(text)));
+  const marker = '__schema_custom_option__';
+  return <>
+    <select className="form-select" aria-label={label} value={other ? marker : text} onChange={event => {
+      const next = event.target.value;
+      if (next === marker) { setEditing(true); return; }
+      setEditing(false);
+      onChange(next === '' ? undefined : numeric ? Number(next) : next);
+    }}>
+      <option value="" />
+      {!custom && text && !options.includes(text) && <option value={text}>{text}</option>}
+      {options.filter(option => option !== '').map(option => <option key={option} value={option}>{option}</option>)}
+      {custom && <option value={marker}>{customLabel}</option>}
+    </select>
+    {other && <input className="form-control" aria-label={label + ' (custom)'} value={text}
+      onChange={event => onChange(event.target.value || undefined)} />}
+  </>;
+}
+
+function useCustomLabel(_label: string) {
+  const { t } = useTranslation();
+  return t('nodeOps.customOption');
+}
+
 export function SchemaForm({ value, fields, onChange, context }: Props) {
   const { t } = useTranslation();
   const render = (field: FieldDef, index: number) => {
@@ -65,11 +96,13 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
     const path: Path = context && typeof field.path !== 'function' ? [...context.path, ...relative] : relative;
     const stored = getPath(value, path);
     const current = field.read ? field.read(stored, value, path) : stored;
+    const resolved = choiceField(field, path);
+    field = resolved;
     const options = typeof field.options === 'function' ? field.options(value) : field.options || [];
     const change = (next: unknown) => {
-      if (field.write) next = field.write(next, value, path);
+      if (field.write && next !== undefined) next = field.write(next, value, path);
       const clear = typeof field.clearValue === 'function' ? field.clearValue(next) : field.clearValue !== undefined && next === field.clearValue;
-      const updated = field.uiOnly ? structuredClone(value) : clear ? deletePath(value, path) : setPath(value, path, next);
+      const updated = field.uiOnly ? structuredClone(value) : clear || next === undefined ? deletePath(value, path) : setPath(value, path, next);
       onChange(field.onChange ? field.onChange(updated, next, path, value) : updated);
     };
     const key = `${path.join('.')}-${index}`;
@@ -111,15 +144,21 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
         onChange={event => change(event.target.value.split(/\r?\n/))} /></label>;
     if (field.kind === 'boolean') return <label key={key}><input type="checkbox" checked={current === true}
       onChange={event => change(event.target.checked)} /> {t(field.label)}</label>;
-    if (field.kind === 'select') return <label key={key} className="flex flex-col gap-1"><span>{t(field.label)}</span>
-      <select className="form-select" value={current ?? ''} onChange={event => change(event.target.value)}>
-        {!options.includes('') && <option value="" />}
-        {current != null && current !== '' && !options.includes(current) && <option value={current}>{current}</option>}
-        {options.map(option => <option key={option} value={option}>{option}</option>)}
-      </select></label>;
-    const id = `options-${key}`;
+    if (field.kind === 'multiSelect') {
+      const selected: string[] = Array.isArray(current) ? current : [];
+      return <fieldset key={key} className="schema-multiselect"><legend>{t(field.label)}</legend>
+        {[...options, ...selected.filter(item => !options.includes(item))].map(option => <label key={option}>
+          <input type="checkbox" checked={selected.includes(option)} onChange={event => {
+            const next = event.target.checked ? [...selected, option] : selected.filter(item => item !== option);
+            change(next.length ? next : undefined);
+          }} /> {option}</label>)}
+      </fieldset>;
+    }
+    if (field.kind === 'select' || field.kind === 'combobox') return <label key={key} className="flex flex-col gap-1">
+      <span>{t(field.label)}</span><Choice current={current} options={options} custom={field.kind === 'combobox'}
+        numeric={field.numericOptions === true} label={t(field.label)} onChange={change} /></label>;
     return <label key={key} className="flex flex-col gap-1"><span>{t(field.label)}</span>
-      <input className="form-control" list={field.kind === 'combobox' ? id : undefined} placeholder={field.placeholder}
+      <input className="form-control" placeholder={field.placeholder}
         type={field.kind === 'number' ? 'number' : field.kind === 'datetime' ? 'datetime-local' : 'text'}
         step={field.kind === 'datetime' ? '0.001' : undefined} value={Array.isArray(current) ? current.join(', ') : current ?? ''}
         onChange={event => {
@@ -129,7 +168,6 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
           } else change(field.kind === 'number' && input !== '' ? Number(input) : input);
         }} />
       {field.generate && <Generator kind={field.generate} onChange={change} />}
-      {field.kind === 'combobox' && <datalist id={id}>{options.map(option => <option key={option} value={option} />)}</datalist>}
     </label>;
   };
   return <div className="grid gap-2 sm:grid-cols-2">{fields.map(render)}</div>;

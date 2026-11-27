@@ -35,7 +35,7 @@ export const protocolFields: FieldDef[] = [
     o => o.protocol === 'shadowsocks'),
   section('hysteria', [settings('version', 'number')], o => o.protocol === 'hysteria'),
   section('wireguard', [settings('secretKey'), settings('mtu', 'number'), settings('subnetIp'),
-    settings('subnetCidr', 'number'), settings('dns'), settings('noKernelTun', 'boolean'),
+    settings('subnetCidr', 'number'), settings('dns'), settings('noKernelTun', 'boolean'), settings('domainStrategy'),
     array('settings.peers', [field('publicKey'), field('preSharedKey'), field('allowedIPs', 'list'),
       field('endpoint'), field('keepAlive', 'number')])], o => o.protocol === 'wireguard'),
   section('socks / mixed', [settings('auth', 'select', ['noauth', 'password']), accounts(),

@@ -30,7 +30,7 @@ it('keeps an untouched outbound identical', async () => {
   render(<XrayTemplateEditor nodeId={7} section="outbounds" />);
   await screen.findByText('host:443');
   fireEvent.click(screen.getByLabelText('common.edit'));
-  expect((screen.getByLabelText('fingerprint') as HTMLInputElement).value).toBe('custom');
+  expect((screen.getByLabelText('fingerprint (custom)') as HTMLInputElement).value).toBe('custom');
   fireEvent.click(screen.getByText('nodeOps.applyDraft'));
   expect((screen.getByText('nodeOps.saveApply') as HTMLButtonElement).disabled).toBe(true);
 });

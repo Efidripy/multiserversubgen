@@ -1961,6 +1961,7 @@
     }
   },
   "nodeOps": {
+    "customOption": "Свой вариант…",
     "shareLink": "Вставить ссылку",
     "import": "Импорт",
     "shareWarnings": "Неподдерживаемые параметры: {{names}}",

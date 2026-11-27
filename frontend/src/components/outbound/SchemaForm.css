@@ -5,3 +5,8 @@
 :is([data-node-operations], .drawer) .outbound-editor textarea.form-control { height: auto; min-height: 80px; }
 :is([data-node-operations], .drawer) .outbound-editor summary { cursor: pointer; padding-block: 4px; }
 :is([data-node-operations], .drawer) .outbound-editor .btn { margin-block: 2px; margin-inline-end: 4px; }
+
+.schema-multiselect { min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.schema-multiselect legend { width: 100%; font-size: 12px; }
+.schema-multiselect label { white-space: nowrap; }
+.schema-multiselect { min-width: 0; border: 1px solid var(--border-color); border-radius: 6px; padding: 4px 10px 8px; }

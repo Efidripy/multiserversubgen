@@ -1,6 +1,7 @@
+import { choiceField } from '../src/components/outbound/schema/choices';
 import { useState } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SchemaForm } from '../src/components/outbound/SchemaForm';
 import { deletePath, setPath } from '../src/components/outbound/paths';
 import type { FieldDef, Outbound } from '../src/components/outbound/types';
@@ -24,12 +25,12 @@ it('edits scalar, list, select, combobox, boolean and JSON fields', () => {
   ];
   render(<Harness fields={fields} initial={{ select: 'unknown', extra: 1 }} />);
   expect((screen.getByLabelText('select') as HTMLSelectElement).value).toBe('unknown');
-  for (const [label, value] of Object.entries({ text: 'abc', number: '12', select: 'known', combo: 'custom',
+  for (const [label, value] of Object.entries({ text: 'abc', number: '12', select: 'known', combo: 'known',
     list: 'a, b', numbers: '1, 2', json: '{"x":1}' })) {
     fireEvent.change(screen.getByLabelText(label), { target: { value } });
   }
   fireEvent.click(screen.getByLabelText('boolean'));
-  expect(data()).toEqual({ extra: 1, text: 'abc', number: 12, boolean: true, select: 'known', combo: 'custom',
+  expect(data()).toEqual({ extra: 1, text: 'abc', number: 12, boolean: true, select: 'known', combo: 'known',
     list: ['a', 'b'], numbers: [1, 2], json: { x: 1 } });
 });
 it('renders sections, conditions, toggles, key values and nested arrays', () => {
@@ -69,4 +70,49 @@ it('updates paths immutably and clears empty parent objects', () => {
   const next = setPath(original, ['a', 'b'], 'value');
   expect(original).toEqual({ other: 1 });
   expect(deletePath(next, ['a', 'b'])).toEqual(original);
+});
+
+it('preserves unknown choices and array order, clears optional values and writes numeric choices', () => {
+  const fields: FieldDef[] = [
+    { path: ['fingerprint'], label: 'fingerprint', kind: 'text' },
+    { path: ['alpn'], label: 'alpn', kind: 'list' },
+    { path: ['proxyProtocol'], label: 'proxyProtocol', kind: 'number' },
+  ];
+  const initial = { fingerprint: 'future', alpn: ['future', 'h2'], proxyProtocol: 1 };
+  render(<Harness fields={fields} initial={initial} />);
+  expect(data()).toEqual(initial);
+  expect((screen.getByLabelText('fingerprint (custom)') as HTMLInputElement).value).toBe('future');
+  fireEvent.click(screen.getByLabelText('h3'));
+  expect(data().alpn).toEqual(['future', 'h2', 'h3']);
+  fireEvent.change(screen.getByLabelText('proxyProtocol'), { target: { value: '2' } });
+  expect(data().proxyProtocol).toBe(2);
+  fireEvent.change(screen.getByLabelText('fingerprint'), { target: { value: '' } });
+  expect(data().fingerprint).toBeUndefined();
+  for (const name of ['future', 'h2', 'h3']) fireEvent.click(screen.getByLabelText(name));
+  expect(data().alpn).toBeUndefined();
+});
+
+it.each([
+  'fingerprint', 'minVersion', 'maxVersion', 'cipherSuites', 'domainStrategy', 'targetStrategy', 'tproxy',
+  'tcpcongestion', 'addressPortStrategy', 'xPaddingPlacement', 'xPaddingMethod', 'sessionIDPlacement',
+  'seqPlacement', 'uplinkDataPlacement', 'uplinkHTTPMethod', 'allowedNetwork', 'trafficReset', 'preferIp',
+  'congestion_control', 'udp_relay_mode', 'log_level', 'echForceQuery', 'shareAddrStrategy', 'usage', 'logLevel',
+])('renders %s as a choice and preserves an unknown value', name => {
+  const initial = { [name]: 'future-value' };
+  render(<Harness fields={[{ path: [name], label: name, kind: 'text' }]} initial={initial} />);
+  expect(screen.getByLabelText(name).tagName).toBe('SELECT');
+  expect(data()).toEqual(initial);
+  expect((screen.getByLabelText(name + ' (custom)') as HTMLInputElement).value).toBe('future-value');
+});
+
+describe('shared choices', () => {
+  it('turns known fields into menus', () => {
+    const kind = (path: string) => choiceField({ path: path.split('.'), label: 'x', kind: 'text' }, path.split('.')).kind;
+    for (const path of ['streamSettings.sockopt.customSockopt.system', 'streamSettings.sockopt.customSockopt.type',
+      'streamSettings.realitySettings.xver', 'streamSettings.tcpSettings.header.request.method',
+      'streamSettings.xhttpSettings.sessionIDTable', 'settings.ascii', 'streamSettings.tlsSettings.settings.fingerprint']) {
+      expect(['select', 'combobox'], path).toContain(kind(path));
+    }
+    expect(kind('settings.fallbacks.path')).toBe('text');
+  });
 });
