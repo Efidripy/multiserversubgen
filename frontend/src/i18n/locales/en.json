@@ -366,6 +366,9 @@
     "noRecordsFound": "No records found"
   },
   "clients": {
+    "recordConflict": "Client changed on node. Your draft has been kept.",
+    "recordReadOnly": "Node is read-only.",
+    "generationFailed": "Generation failed.",
     "title": "Client Manager",
     "addClient": "Add Client",
     "batchAdd": "Batch Add",

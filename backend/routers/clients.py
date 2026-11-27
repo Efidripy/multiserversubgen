@@ -438,6 +438,36 @@ def build_clients_router(
         await _broadcast_client_update({"action": "add_to_nodes", "email": email, "result": results, "_delta": True})
         return results
 
+    @router.get("/api/v1/clients/{client_uuid}/record")
+    async def read_client_record(request: Request, client_uuid: str, node_id: int, inbound_id: int):
+        if not check_auth(request):
+            raise HTTPException(status_code=401)
+        node = await _run(get_node_or_404, node_id)
+        value = await _run(client_mgr.read_client_record, node, inbound_id, client_uuid)
+        if value is None:
+            raise HTTPException(status_code=502, detail="Unable to read client from node")
+        return ORJSONResponse(content={"value": value}, headers={"Cache-Control": "no-store"})
+
+    @router.put("/api/v1/clients/{client_uuid}/record")
+    async def replace_client_record(request: Request, client_uuid: str, data: Dict):
+        if not check_auth(request):
+            raise HTTPException(status_code=401)
+        if not isinstance(data.get("value"), dict) or not isinstance(data.get("expected"), dict):
+            raise HTTPException(status_code=422, detail="value and expected must be objects")
+        if not data.get("node_id") or not data.get("inbound_id"):
+            raise HTTPException(status_code=400, detail="node_id and inbound_id required")
+        node = await _run(get_node_or_404, data["node_id"])
+        result = await _run(client_mgr.replace_client_record, node, data["inbound_id"], client_uuid,
+                            data["expected"], data["value"])
+        if result != "ok":
+            status = {"conflict": 409, "read_only": 403}.get(result, 502)
+            raise HTTPException(status_code=status, detail={"conflict": "Client changed on node",
+                                "read_only": "Node is read-only"}.get(result, "Unable to save client on node"))
+        await _run(invalidate_live_stats_cache)
+        await _run(invalidate_subscription_cache)
+        await _broadcast_client_update({"action": "update", "_delta": True})
+        return ORJSONResponse(content={"success": True}, headers={"Cache-Control": "no-store"})
+
     @router.put("/api/v1/clients/{client_uuid}")
     async def update_client(request: Request, client_uuid: str, data: Dict):
         user = check_auth(request)

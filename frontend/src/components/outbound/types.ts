@@ -4,7 +4,8 @@ export type ItemContext = { path: Path; value: Outbound; index: number } | undef
 export type FieldDef = {
   path: Path | ((outbound: Outbound, itemContext: ItemContext) => Path);
   label: string;
-  kind: 'text' | 'number' | 'boolean' | 'select' | 'combobox' | 'list' | 'lineList' | 'datetime' | 'numberList' | 'keyValue' | 'array' | 'section' | 'toggle' | 'json';
+  kind: 'text' | 'number' | 'boolean' | 'select' | 'combobox' | 'list' | 'lineList' | 'datetime' | 'numberList'
+    | 'keyValue' | 'array' | 'section' | 'toggle' | 'json';
   options?: string[] | ((outbound: Outbound) => string[]);
   placeholder?: string;
   showIf?: (outbound: Outbound, itemContext: ItemContext) => boolean;
@@ -15,5 +16,5 @@ export type FieldDef = {
   write?: (value: unknown, outbound: Outbound, path: Path) => unknown;
   onChange?: (outbound: Outbound, value: unknown, path: Path, previous: Outbound) => Outbound;
   uiOnly?: boolean;
-  generate?: 'password' | 'shortId' | 'x25519';
+  generate?: 'password' | 'shortId' | 'x25519' | 'uuid';
 };

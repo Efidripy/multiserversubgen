@@ -40,6 +40,14 @@ function Generator({ kind, onChange }: { kind: NonNullable<FieldDef['generate']>
       } catch { setAvailable(false); }
       return;
     }
+    if (kind === 'uuid') {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+      onChange(`${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`);
+      return;
+    }
     const chars = kind === 'shortId' ? '0123456789abcdef' : 'abcdefghijklmnopqrstuvwxyz0123456789';
     const bytes = crypto.getRandomValues(new Uint8Array(16));
     onChange(Array.from(bytes, b => chars[b % chars.length]).join(''));
@@ -111,7 +119,8 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
     const id = `options-${key}`;
     return <label key={key} className="flex flex-col gap-1"><span>{t(field.label)}</span>
       <input className="form-control" list={field.kind === 'combobox' ? id : undefined} placeholder={field.placeholder}
-        type={field.kind === 'number' ? 'number' : field.kind === 'datetime' ? 'datetime-local' : 'text'} value={Array.isArray(current) ? current.join(', ') : current ?? ''}
+        type={field.kind === 'number' ? 'number' : field.kind === 'datetime' ? 'datetime-local' : 'text'}
+        step={field.kind === 'datetime' ? '0.001' : undefined} value={Array.isArray(current) ? current.join(', ') : current ?? ''}
         onChange={event => {
           const input = event.target.value;
           if (field.kind === 'list' || field.kind === 'numberList') {
