@@ -58,7 +58,7 @@ describe('inbound form serialization', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'inbounds.multipathTcp' }));
     fireEvent.click(screen.getByRole('switch', { name: 'inbounds.v6Only' }));
     fireEvent.change(field('inbounds.tcpCongestion'), { target: { value: 'bbr' } });
-    fireEvent.change(field('inbounds.ipsExcluded'), { target: { value: '1.2.3.4' } });
-    expect(await save()).toEqual({ remark: 'main', port: 443, enable: true, streamSettings: { network: 'tcp', sockopt: { tcpMultiPath: true, tcpCongestion: 'old', v6only: true, extra: 1, tcpMptcp: false, tcpcongestion: 'bbr', V6Only: false } }, sniffing: { enabled: true, excludeForInbound: ['old'], extra: 2, ipsExcluded: ['1.2.3.4'] } });
+    fireEvent.change(field('inbounds.ipsExcluded'), { target: { value: '192.0.2.1' } });
+    expect(await save()).toEqual({ remark: 'main', port: 443, enable: true, streamSettings: { network: 'tcp', sockopt: { tcpMultiPath: true, tcpCongestion: 'old', v6only: true, extra: 1, tcpMptcp: false, tcpcongestion: 'bbr', V6Only: false } }, sniffing: { enabled: true, excludeForInbound: ['old'], extra: 2, ipsExcluded: ['192.0.2.1'] } });
   });
 });
