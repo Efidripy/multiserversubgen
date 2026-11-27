@@ -500,6 +500,20 @@ class TestThreeXUIMonitor:
         assert result["traffic"][0]["total"] == 3000
         assert result["traffic"][1]["total"] == 1300
 
+    def test_get_traffic_deduplicates_client_stats(self):
+        monitor = self._build_monitor()
+        inbounds = [
+            {"clientStats": [{"email": "a", "up": 5, "down": 10, "enable": True}]},
+            {"clientStats": [{"email": "a", "up": 12, "down": 10, "enable": False},
+                             {"email": "b", "up": 1, "down": 2, "enable": True}]},
+        ]
+        with patch.object(monitor, "get_inbounds", return_value={"available": True, "inbounds": inbounds}):
+            result = monitor.get_traffic(self._node())
+        assert result["clients"] == [
+            {"email": "a", "upload": 12, "download": 10, "total": 22, "enable": False},
+            {"email": "b", "upload": 1, "download": 2, "total": 3, "enable": True},
+        ]
+
     def test_get_online_clients_prefers_modern_clients_endpoint(self):
         monitor = self._build_monitor()
         body = {"success": True, "obj": ["user@a.com", "user@b.com"]}

@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const getNodeTraffic = vi.hoisted(() => vi.fn());
 const getNodeOnlineClients = vi.hoisted(() => vi.fn());
+const getOutboundsTraffic = vi.hoisted(() => vi.fn());
+const getXrayTemplate = vi.hoisted(() => vi.fn());
+const updateXrayTemplate = vi.hoisted(() => vi.fn());
+const translate = vi.hoisted(() => (key: string) => key);
 
 vi.mock('../src/api/serverOps', () => ({
   createApiToken: vi.fn(),
@@ -14,9 +18,10 @@ vi.mock('../src/api/serverOps', () => ({
   getApiTokens: vi.fn(),
   getNodeOnlineClients,
   getNodeTraffic,
-  getOutboundsTraffic: vi.fn(),
+  getOutboundsTraffic,
+  getXrayTemplate,
+  updateXrayTemplate,
   getXrayConfig: vi.fn(),
-  getXrayMetrics: vi.fn(),
   getXrayObservatory: vi.fn(),
   getXrayVersions: vi.fn(),
   installXray: vi.fn(),
@@ -26,7 +31,7 @@ vi.mock('../src/api/serverOps', () => ({
 }));
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: translate }),
 }));
 
 vi.mock('../src/components/Toast', () => ({
@@ -63,7 +68,41 @@ describe('NodeOperationsModal tab loading', () => {
     rejectTraffic?.(new Error('stale traffic request'));
     resolveOnline?.({ fresh: true });
 
+    fireEvent.click(screen.getByRole('button', { name: 'JSON' }));
     await screen.findByText(/"fresh": true/);
     expect(screen.queryByText('stale traffic request')).toBeNull();
+  });
+});
+
+
+describe('node data views', () => {
+  it('shows traffic and online tables and switches to JSON', async () => {
+    getNodeTraffic.mockResolvedValue({ available: true, clients: [{ email: 'alice', upload: 1024, download: 2048, total: 3072, enable: false }], traffic: [] });
+    getNodeOnlineClients.mockResolvedValue({ online_clients: ['alice', { email: 'bob' }] });
+    render(<NodeOperationsModal nodeId={7} nodeName="node" onClose={vi.fn()} />);
+    await screen.findByText(/alice/);
+    expect(screen.getByText('3.0 KB')).toBeTruthy();
+    expect(screen.getByText('common.disabled')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'JSON' }));
+    expect(screen.getByText(/"email": "alice"/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'serverStatus.onlineClients' }));
+    await screen.findByText(/bob/);
+    fireEvent.change(screen.getByPlaceholderText('nodeOps.search'), { target: { value: 'alice' } });
+    expect(screen.queryByText(/bob/)).toBeNull();
+  });
+  it('updates outbound flags using the exact original template', async () => {
+    const original = { outbounds: [{ tag: 'direct' }], policy: { system: { other: 1 } }, other: 2 };
+    getOutboundsTraffic.mockResolvedValue([{ tag: 'proxy', up: 1, down: 2, total: 3 }]);
+    getXrayTemplate.mockResolvedValue(original);
+    updateXrayTemplate.mockResolvedValue(undefined);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<NodeOperationsModal nodeId={7} nodeName="node" initialTab="outbounds" onClose={vi.fn()} />);
+    await screen.findByText('direct');
+    expect(screen.getByText('proxy')).toBeTruthy();
+    fireEvent.click(screen.getByRole('switch'));
+    await waitFor(() => expect(updateXrayTemplate).toHaveBeenCalledWith(7, 'all', { ...original, stats: {}, policy: { system: { other: 1, statsOutboundUplink: true, statsOutboundDownlink: true } } }, original));
+    fireEvent.click(screen.getByRole('button', { name: 'JSON' }));
+    expect(screen.getByText(/"tag": "proxy"/)).toBeTruthy();
+    vi.restoreAllMocks();
   });
 });

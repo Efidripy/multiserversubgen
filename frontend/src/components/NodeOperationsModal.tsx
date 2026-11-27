@@ -12,7 +12,6 @@ import {
   getNodeTraffic,
   getOutboundsTraffic,
   getXrayConfig,
-  getXrayMetrics,
   getXrayObservatory,
   getXrayVersions,
   installXray,
@@ -22,13 +21,13 @@ import {
 } from '../api/serverOps';
 import { XrayTemplateEditor } from './XrayTemplateEditor';
 import { SystemHistory } from './SystemHistory';
+import { NodeDataView } from './NodeDataView';
 import { useToast } from './Toast';
 import { UIIcon, type IconName } from './UIIcon';
 
 export type NodeOpsTab =
   | 'traffic'
   | 'online'
-  | 'metrics'
   | 'outbounds'
   | 'outboundsConfig'
   | 'routing'
@@ -60,23 +59,22 @@ interface ApiTokenItem {
 type KeyKind = 'uuid' | 'x25519' | 'vless' | 'mldsa65';
 
 const overlayClass = 'fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-3 py-5';
-const panelClass = 'flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-cyan-300/20 bg-[#0f1420] text-slate-100 shadow-2xl ring-1 ring-cyan-300/10';
+const panelClass = 'flex h-[min(92vh,820px)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-cyan-300/20 bg-[#0f1420] text-slate-100 shadow-2xl ring-1 ring-cyan-300/10';
 const panelHeaderClass = 'flex min-w-0 items-start justify-between gap-4 border-b border-cyan-300/20 px-4 py-4 sm:px-5';
-const panelBodyClass = 'grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[220px_minmax(0,1fr)]';
-const sideClass = 'min-w-0 border-b border-cyan-300/20 p-3 lg:border-b-0 lg:border-r lg:p-4';
-const contentClass = 'min-w-0 overflow-y-auto p-4 sm:p-5';
+const panelBodyClass = 'flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row';
+const sideClass = 'max-h-[28%] min-w-0 shrink-0 overflow-y-auto border-b border-cyan-300/20 p-3 lg:max-h-none lg:w-[220px] lg:border-b-0 lg:border-r lg:p-4';
+const contentClass = 'flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4';
 const buttonBaseClass = 'inline-flex h-9 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-transparent px-3 text-xs font-medium uppercase tracking-[0.12em] transition disabled:cursor-not-allowed disabled:opacity-45';
 const buttonPrimaryClass = `${buttonBaseClass} border-cyan-300/25 bg-cyan-400 text-[#06111f] hover:bg-cyan-300`;
 const buttonSecondaryClass = `${buttonBaseClass} border-cyan-500/20 bg-[#0a0e1a] text-slate-300 hover:bg-[#101827] hover:text-cyan-200`;
 const buttonDangerClass = `${buttonBaseClass} border-rose-400/25 bg-rose-500 text-white hover:bg-rose-400`;
 const inputClass = 'h-9 min-w-0 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 font-mono text-xs font-light text-slate-100 outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10 placeholder:text-slate-600';
-const preClass = 'max-h-[52vh] min-h-[220px] overflow-auto rounded-lg border border-cyan-500/20 bg-[#07101d] p-3 font-mono text-xs leading-5 text-slate-200';
+const preClass = 'min-h-0 flex-1 overflow-auto rounded-lg border border-cyan-500/20 bg-[#07101d] p-3 font-mono text-xs leading-5 text-slate-200';
 const chipClass = 'inline-flex min-w-0 items-center gap-2 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-2 py-1 text-[11px] font-light text-slate-300';
 
 const tabs: Array<{ id: NodeOpsTab; labelKey: string; icon: IconName }> = [
   { id: 'traffic', labelKey: 'nav.traffic', icon: 'traffic' },
   { id: 'online', labelKey: 'serverStatus.onlineClients', icon: 'clients' },
-  { id: 'metrics', labelKey: 'serverStatus.xrayMetricsTitle', icon: 'monitoring' },
   { id: 'outbounds', labelKey: 'serverStatus.outboundTraffic', icon: 'upload' },
   { id: 'observatory', labelKey: 'serverStatus.xrayObservatory', icon: 'statusOn' },
   { id: 'history', labelKey: 'nodeOps.history', icon: 'monitoring' },
@@ -157,6 +155,7 @@ export function NodeOperationsModal({
     const isCurrentRequest = () => requestId === tabRequestIdRef.current;
     tabAbortRef.current?.abort();
     tabAbortRef.current = null;
+    setError('');
     if (tab === 'keys' || tab === 'panel' || tab === 'history' || tab === 'outboundsConfig' || tab === 'routing' || (tab === 'config' && configMode === 'template')) return;
     const controller = new AbortController();
     tabAbortRef.current = controller;
@@ -169,9 +168,6 @@ export function NodeOperationsModal({
       } else if (tab === 'online') {
         const payload = await getNodeOnlineClients(nodeId, { signal: controller.signal, force });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, online: payload }));
-      } else if (tab === 'metrics') {
-        const payload = await getXrayMetrics(nodeId, { signal: controller.signal, force });
-        if (isCurrentRequest()) setDataByTab((current) => ({ ...current, metrics: payload }));
       } else if (tab === 'outbounds') {
         const payload = await getOutboundsTraffic(nodeId, { signal: controller.signal, force });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, outbounds: payload }));
@@ -192,7 +188,7 @@ export function NodeOperationsModal({
         if (isCurrentRequest()) setTokens(payload as ApiTokenItem[]);
       }
     } catch (err: any) {
-      if (isCurrentRequest() && !controller.signal.aborted) setError(getErrorMessage(err, t('common.failed')));
+      if (isCurrentRequest() && !controller.signal.aborted) setError(getErrorMessage(err, t(tab === 'outbounds' ? 'nodeOps.nodeUnavailable' : 'common.failed')));
     } finally {
       if (isCurrentRequest()) {
         setLoadingTab(null);
@@ -333,7 +329,7 @@ export function NodeOperationsModal({
   const renderJsonPanel = (value: unknown, emptyLabel: string) => {
     const text = stringify(value);
     return (
-      <div className="space-y-3">
+      <div className="flex min-h-0 flex-1 flex-col gap-3">
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
           <span className={chipClass}>
             <UIIcon name={loadingTab === activeTab ? 'spinner' : 'check'} size={13} />
@@ -475,23 +471,23 @@ export function NodeOperationsModal({
 
   const renderKeys = () => (
     <div className="space-y-4">
-      <div className="grid min-w-0 grid-cols-2 gap-2 lg:grid-cols-4">
+      <p className="text-sm text-slate-200">{t('nodeOps.keyExplanation')}</p>
+      <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
         {[
           { kind: 'uuid' as const, label: 'UUID' },
           { kind: 'x25519' as const, label: 'X25519' },
-          { kind: 'vless' as const, label: t('clients.generateVlessEncryption') },
+          { kind: 'vless' as const, label: t('nodeOps.vlessEncryption') },
           { kind: 'mldsa65' as const, label: 'ML-DSA-65' },
         ].map((item) => (
-          <button
-            key={item.kind}
+          <div key={item.kind} className="min-w-0 space-y-1"><button
             type="button"
             className={buttonSecondaryClass}
             onClick={() => void handleGenerateKey(item.kind)}
             disabled={keyLoading !== null}
           >
             <UIIcon name={keyLoading === item.kind ? 'spinner' : 'snowflake'} size={14} />
-            {item.label}
-          </button>
+            {t('nodeOps.generateKey', { type: item.label })}
+          </button><p className="text-xs text-slate-400">{t(`nodeOps.keyHint_${item.kind}`)}</p></div>
         ))}
       </div>
       {generatedKey ? (
@@ -574,7 +570,8 @@ export function NodeOperationsModal({
             {activeTab === 'history' ? <SystemHistory nodeId={nodeId} />
               : activeTab === 'outboundsConfig' ? <XrayTemplateEditor key="outbounds" nodeId={nodeId} section="outbounds" />
               : activeTab === 'routing' ? <XrayTemplateEditor key="routing" nodeId={nodeId} section="routing" />
-              : activeTab === 'config' ? <div className="space-y-3"><div className="flex flex-wrap gap-2">{(['template', 'running'] as const).map((mode) => <button type="button" key={mode} aria-pressed={configMode === mode} className={buttonSecondaryClass} onClick={() => setConfigMode(mode)}>{t(`nodeOps.${mode}`)}</button>)}</div>{configMode === 'template' ? <XrayTemplateEditor nodeId={nodeId} section="all" /> : renderJsonPanel(activeData, t('common.noRecordsFound'))}</div>
+              : activeTab === 'config' ? <div className="flex min-h-0 flex-1 flex-col gap-3"><div className="flex flex-wrap gap-2">{(['template', 'running'] as const).map((mode) => <button type="button" key={mode} aria-pressed={configMode === mode} className={buttonSecondaryClass} onClick={() => setConfigMode(mode)}>{t(`nodeOps.${mode}`)}</button>)}</div>{configMode === 'template' ? <XrayTemplateEditor nodeId={nodeId} section="all" /> : renderJsonPanel(activeData, t('common.noRecordsFound'))}</div>
+              : activeTab === 'traffic' || activeTab === 'online' || activeTab === 'outbounds' ? <NodeDataView key={activeTab} nodeId={nodeId} kind={activeTab} data={activeData} loading={loadingTab === activeTab} refresh={() => void loadTab(activeTab, true)} copy={() => void copyValue(activeData)} />
               : activeTab === 'versions' ? renderVersions()
               : activeTab === 'tokens' ? renderTokens()
                 : activeTab === 'keys' ? renderKeys()

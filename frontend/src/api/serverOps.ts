@@ -154,6 +154,7 @@ export async function updateGeofile(nodeId: number): Promise<any> {
 
 export async function getOutboundsTraffic(nodeId: number, options: ReadRequestOptions = {}): Promise<any[]> {
   const res = await api.get(`/v1/nodes/${nodeId}/outbounds-traffic`, { auth: getAuth(), signal: options.signal, ...(options.force ? { force: true } : {}) });
+  if (res.data?.error || res.data?.available === false) throw new Error(String(res.data?.error || ""));
   return res.data?.outbounds || [];
 }
 
@@ -164,11 +165,6 @@ export async function getNodeTraffic(nodeId: number, options: ReadRequestOptions
 
 export async function getNodeOnlineClients(nodeId: number, options: ReadRequestOptions = {}): Promise<any> {
   const res = await api.get(`/v1/nodes/${nodeId}/online-clients`, { auth: getAuth(), signal: options.signal, ...(options.force ? { force: true } : {}) });
-  return res.data;
-}
-
-export async function getXrayMetrics(nodeId: number, options: ReadRequestOptions = {}): Promise<any> {
-  const res = await api.get(`/v1/nodes/${nodeId}/xray-metrics`, { auth: getAuth(), signal: options.signal, ...(options.force ? { force: true } : {}) });
   return res.data;
 }
 

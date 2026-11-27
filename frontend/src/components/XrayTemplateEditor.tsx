@@ -37,13 +37,13 @@ export function XrayTemplateEditor({ nodeId, section }: { nodeId: number; sectio
     catch (err: any) { setError(err?.response?.data?.detail || err.message); }
     finally { setBusy(false); }
   };
-  return <div className="space-y-3">
+  return <div className="flex min-h-0 flex-1 flex-col gap-3">
     <div className="flex flex-wrap gap-2">
       <button type="button" className="rounded border border-cyan-500/30 px-3 py-2 text-xs text-slate-200 disabled:opacity-40" disabled={busy || !valid || text === original || !original} onClick={() => void save()}>{t('nodeOps.saveApply')}</button>
       <button type="button" className="rounded border border-cyan-500/30 px-3 py-2 text-xs text-slate-200" disabled={busy} onClick={() => void reload()}>{t('nodeOps.reload')}</button>
       <button type="button" className="rounded border border-cyan-500/30 px-3 py-2 text-xs text-slate-200" onClick={() => void navigator.clipboard.writeText(text).catch(() => setError(t('serverStatus.clipboardUnavailable')))}>{t('common.copy')}</button>
     </div>
     {(error || parseError || (text && !valid ? t('nodeOps.invalidShape') : '')) && <div role="alert" className="text-sm text-rose-300">{error || parseError || t('nodeOps.invalidShape')}</div>}
-    <textarea aria-label={t('nodeOps.template')} className="min-h-[350px] w-full rounded border border-cyan-500/20 bg-[#07101d] p-3 font-mono text-xs text-slate-200" value={text} disabled={busy || !original} onChange={(event) => setText(event.target.value)} />
+    <textarea aria-label={t('nodeOps.template')} className="min-h-0 w-full flex-1 resize-none rounded border border-cyan-500/20 bg-[#07101d] p-3 font-mono text-xs text-slate-200" value={text} disabled={busy || !original} onChange={(event) => setText(event.target.value)} />
   </div>;
 }
