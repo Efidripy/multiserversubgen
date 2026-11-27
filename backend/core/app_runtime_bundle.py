@@ -221,6 +221,9 @@ def build_app_runtime_bundle(
         clients_cache_stale_ttl=clients_cache_stale_ttl,
         start_cache_refresh=live_stats_runtime.start_cache_refresh,
         filter_reachable_nodes=snapshot_collector.filter_reachable_nodes,
+        db_path=db_path,
+        encrypt=encrypt,
+        decrypt=decrypt,
     )
 
     snapshot_collector.on_cycle_completed = clients_runtime.refresh_after_collector_cycle
