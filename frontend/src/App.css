@@ -90,7 +90,7 @@
 
   html {
     font-size: var(--font-size);
-    overflow-x: hidden;
+    overflow-x: clip;
     scrollbar-width: none;
     -ms-overflow-style: none;
   }
@@ -108,7 +108,7 @@
     margin: 0;
     min-width: 320px;
     min-height: 100vh;
-    overflow-x: hidden;
+    overflow-x: clip;
     background: #0a0e1a;
     color: #f8fafc;
     font-family: var(--font-sans);
@@ -187,7 +187,7 @@
     display: flex;
     align-items: stretch;
     background: #0a0e1a;
-    overflow: hidden;
+    overflow-x: clip;
   }
 
   .app-layout:has(.sidebar--collapsed),
@@ -202,6 +202,8 @@
     flex: 0 0 240px;
     width: 240px;
     height: 100vh;
+    height: 100dvh;
+    box-sizing: border-box;
     z-index: 35;
     display: flex;
     flex-direction: column;
@@ -241,6 +243,7 @@
   }
 
   .sidebar__logo {
+    flex-shrink: 0;
     min-height: 64px;
     padding: 14px 16px;
     display: flex;
@@ -313,6 +316,10 @@
   }
 
   .sidebar__nav {
+    flex: 0 1 auto;
+    /* About three items stay visible; below that the whole sidebar scrolls. */
+    min-height: 128px;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -433,6 +440,7 @@
   }
 
   .sidebar__footer {
+    flex-shrink: 0;
     padding: 10px 16px 14px;
     border-top: 1px solid rgba(34, 211, 238, 0.20);
   }
@@ -493,6 +501,10 @@
     border-radius: 4px;
   }
 
+  .sidebar__preferences-toggle { margin-left: auto; flex-shrink: 0; }
+  .sidebar__preferences-toggle + .sidebar__user-settings { margin-left: 0; flex-shrink: 0; }
+  .sidebar__username { min-width: 0; }
+
   .sidebar__language {
     display: flex;
     flex-direction: column;
@@ -515,7 +527,7 @@
 
   .sidebar__footer-actions {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: 4px;
     width: 100%;
   }
@@ -541,6 +553,13 @@
     letter-spacing: 0.035em;
     line-height: 1;
     overflow: hidden;
+  }
+
+  .sidebar__footer-btn--icon {
+    width: auto !important;
+    flex: 1 1 0;
+    justify-content: center;
+    padding: 0;
   }
 
   .sidebar__logout {
@@ -656,7 +675,7 @@
     max-width: 100%;
     min-height: 100vh;
     background: #0a0e1a;
-    overflow: hidden;
+    overflow-x: clip;
   }
 
   .app-pull-refresh {
@@ -1771,14 +1790,10 @@
   .app-layout,
   .app-shell {
     display: block;
-    /* In standalone iOS the translucent status bar belongs to the viewport.
-       Reserve its inset on the root so no interactive topbar content is ever
-       painted underneath the system blur. */
-    padding-top: env(safe-area-inset-top, 0px);
   }
 
   .app-main {
-    min-height: calc(100dvh - env(safe-area-inset-top, 0px));
+    min-height: 100dvh;
   }
 
   .sidebar,
@@ -1792,6 +1807,10 @@
     transform: translateX(-100%);
   }
 
+  .sidebar__footer {
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+
   .sidebar--collapsed {
     width: min(20rem, calc(100% - 2rem));
   }
@@ -1803,9 +1822,9 @@
   .app-topbar {
     align-items: center;
     flex-direction: row;
-    height: 56px;
-    min-height: 56px;
-    padding: 0 12px;
+    height: calc(56px + env(safe-area-inset-top, 0px));
+    min-height: calc(56px + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) 12px 0;
     width: 100%;
     max-width: 100%;
     box-sizing: border-box;
@@ -1813,7 +1832,7 @@
   }
 
   .app-pull-refresh {
-    top: 56px;
+    top: calc(56px + env(safe-area-inset-top, 0px));
   }
 
   .app-topbar__menu-btn {
@@ -1888,7 +1907,7 @@
 
 @media (max-width: 520px) {
   .app-topbar {
-    padding: 0 8px;
+    padding: env(safe-area-inset-top, 0px) 8px 0;
     gap: 8px;
   }
 

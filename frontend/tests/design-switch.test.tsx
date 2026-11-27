@@ -77,6 +77,11 @@ describe('design switch', () => {
       </ThemeProvider>,
     );
 
+    expect(screen.queryByText('language.title')).toBeNull();
+    const preferences = screen.getByRole('button', { name: 'sidebar.preferences' });
+    expect(preferences.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(preferences);
+    expect(preferences.getAttribute('aria-expanded')).toBe('true');
     const languageLabel = screen.getByText('language.title');
     const designLabel = screen.getByText('design.title');
     expect(languageLabel.compareDocumentPosition(designLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -102,6 +107,7 @@ it('keeps classic home controls and moves both new home controls to the header',
   expect(container.querySelector('.sidebar__version-badge')?.tagName).toBe('SPAN');
   expect(container.querySelector('.sidebar__back-selector')).not.toBeNull();
   expect(container.querySelector('.sidebar__home-btn')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'sidebar.preferences' }));
   fireEvent.click(screen.getByText('design.new'));
   expect(container.querySelector('.sidebar__back-selector')).toBeNull();
   fireEvent.click(screen.getByText('v3.1'));

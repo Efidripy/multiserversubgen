@@ -49,8 +49,7 @@
 :root[data-design="new"] .sidebar {
   flex-basis: var(--ln-sidebar-w);
   width: var(--ln-sidebar-w);
-  height: auto;
-  min-height: 100dvh;
+  height: 100dvh;
   border-right: 1px solid var(--ln-line);
   font-family: var(--ln-font);
   box-shadow: none;
@@ -129,6 +128,7 @@
   color: var(--ln-text-2);
   box-shadow: none;
 }
+:root[data-design="new"] .sidebar__preferences-toggle + .sidebar__user-settings { margin-left: 0; }
 :root[data-design="new"] .sidebar__user-settings:hover:not(:disabled),
 :root[data-design="new"] .sidebar__user-settings.is-active {
   border-color: var(--ln-line-strong);
@@ -287,14 +287,15 @@
 
 @media (max-width: 1024px) {
   :root[data-design="new"] .sidebar,
-  :root[data-design="new"] .sidebar--collapsed { width: var(--ln-sidebar-w); max-width: calc(100vw - 32px); flex-basis: auto; }
-  :root[data-design="new"] .app-topbar { height: var(--ln-topbar-h); min-height: var(--ln-topbar-h); padding: 0 12px; }
+  :root[data-design="new"] .sidebar--collapsed { width: var(--ln-sidebar-w); max-width: calc(100vw - 32px); flex-basis: auto; height: calc(100dvh - env(safe-area-inset-top, 0px)); }
+  :root[data-design="new"] .sidebar__footer { padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+  :root[data-design="new"] .app-topbar { height: calc(var(--ln-topbar-h) + env(safe-area-inset-top, 0px)); min-height: calc(var(--ln-topbar-h) + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) 12px 0; }
   :root[data-design="new"] .app-topbar__menu-btn { width: 28px; height: 28px; flex: 0 0 28px; }
   :root[data-design="new"] .app-topbar__command-btn { width: 28px; min-width: 28px; }
   :root[data-design="new"] .app-topbar__actions { flex-shrink: 0; overflow-x: auto; overflow-y: hidden; }
 }
 @media (max-width: 520px) {
-  :root[data-design="new"] .app-topbar { padding: 0 8px; gap: 8px; }
+  :root[data-design="new"] .app-topbar { padding: env(safe-area-inset-top, 0px) 8px 0; gap: 8px; }
   :root[data-design="new"] .app-topbar__title { font-size: 11px; overflow: hidden; white-space: nowrap; }
   :root[data-design="new"] .app-topbar__title-content { overflow: hidden; }
   :root[data-design="new"] .app-topbar__title-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BookOpen, ChevronLeft, ChevronRight, ClipboardList, Home, Keyboard, LogOut, Settings } from 'lucide-react';
+import { BookOpen, ChevronLeft, ChevronRight, ClipboardList, Home, Keyboard, LogOut, Settings, SlidersHorizontal } from 'lucide-react';
 import { useDesign, useTheme } from '../contexts/ThemeContext';
 import { ChoiceChips } from './ChoiceChips';
 import { IconName, UIIcon } from './UIIcon';
@@ -45,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const currentLang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase();
   const safeItems = Array.isArray(items) ? items : [];
   const [collapsed, setCollapsed] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const effectiveCollapsed = collapsed && !mobileOpen;
   const renderExpandedFooter = !effectiveCollapsed;
   const renderCollapsedFooter = effectiveCollapsed;
@@ -152,6 +153,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="sidebar__username" style={{ color: colors.text.primary, fontWeight: 600 }}>
                   {user}
                 </span>
+                <button
+                  type="button"
+                  className="sidebar__user-settings sidebar__preferences-toggle"
+                  onClick={() => setPreferencesOpen((value) => !value)}
+                  aria-expanded={preferencesOpen}
+                  aria-label={t('sidebar.preferences')}
+                  title={t('sidebar.preferences')}
+                >
+                  <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                </button>
                 {canManageUsers && (
                   <button
                     type="button"
@@ -166,6 +177,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 )}
               </div>
 
+              {preferencesOpen && <>
               <div className="sidebar__language">
                 <label className="sidebar__language-label" style={{ color: colors.text.secondary }}>
                   {t('language.title')}
@@ -196,32 +208,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 />
               </div>
 
+              </>}
+
               <div className="sidebar__footer-actions">
                 <button
-                  className="sidebar__footer-btn"
-                  title={t('sidebar.keyboardShortcutsTitle')}
+                  className="sidebar__footer-btn sidebar__footer-btn--icon"
+                  title={t('sidebar.shortcuts')}
+                  aria-label={t('sidebar.shortcuts')}
                   onClick={() => alert(shortcutText)}
                 >
                   <span className="sidebar__footer-icon"><Keyboard className="w-3.5 h-3.5 opacity-60" /></span>
-                  <span className="sidebar__footer-label">{t('sidebar.shortcuts')}</span>
                 </button>
                 <button
-                  className="sidebar__footer-btn"
+                  className="sidebar__footer-btn sidebar__footer-btn--icon"
+                  aria-label={t('sidebar.activityLog')}
                   onClick={onOpenLog}
                   title={t('sidebar.activityLog')}
                 >
                   <span className="sidebar__footer-icon"><ClipboardList className="w-3.5 h-3.5 opacity-60" /></span>
-                  <span className="sidebar__footer-label">{t('sidebar.activityLog', 'Activity Log')}</span>
                 </button>
                 <a
                   href={`${API_BASE}/docs`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="sidebar__footer-btn"
-                  title={t('sidebar.apiDocsTitle')}
+                  className="sidebar__footer-btn sidebar__footer-btn--icon"
+                  title={t('sidebar.apiDocs')}
+                  aria-label={t('sidebar.apiDocs')}
                 >
                   <span className="sidebar__footer-icon"><BookOpen className="w-3.5 h-3.5 opacity-60" /></span>
-                  <span className="sidebar__footer-label">{t('sidebar.apiDocs')}</span>
                 </a>
                 <button
                   className="sidebar__footer-btn sidebar__logout"

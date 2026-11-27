@@ -945,7 +945,7 @@ export const App: React.FC = () => {
         onOpenUsers={() => setActiveTab('users')}
       />
 
-      <div ref={pullToRefresh.rootRef} className="app-main min-w-0 flex-1 overflow-hidden" {...pullToRefresh.handlers}>
+      <div ref={pullToRefresh.rootRef} className="app-main min-w-0 flex-1" {...pullToRefresh.handlers}>
         <div
           className={`app-pull-refresh is-${pullToRefresh.state}`}
           role="status"
