@@ -28,7 +28,7 @@ export const securityFields: FieldDef[] = [
       field('oneTimeLoading', 'boolean'), field('usage', 'combobox', ['encipherment', 'verify', 'issue']),
       field('buildChain', 'boolean')]),
     ...['serverName', 'cipherSuites', 'minVersion', 'maxVersion', 'echServerKeys', 'masterKeyLog',
-      'settings.fingerprint', 'settings.echConfigList', 'settings.verifyPeerCertByName',
+      'echForceQuery', 'settings.fingerprint', 'settings.echConfigList', 'settings.verifyPeerCertByName',
       'echSockopt.dialerProxy', 'echSockopt.domainStrategy'].map(k => f('tls', k)),
     ...['alpn', 'curvePreferences', 'settings.pinnedPeerCertSha256'].map(k => f('tls', k, 'list')),
     ...['rejectUnknownSni', 'disableSystemRoot', 'enableSessionResumption', 'allowInsecure',

@@ -1961,6 +1961,7 @@
     }
   },
   "nodeOps": {
+    "customOption": "Custom value…",
     "shareLink": "Paste share link",
     "import": "Import",
     "shareWarnings": "Unsupported parameters: {{names}}",

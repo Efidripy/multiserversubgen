@@ -5,7 +5,8 @@ export type FieldDef = {
   path: Path | ((outbound: Outbound, itemContext: ItemContext) => Path);
   label: string;
   kind: 'text' | 'number' | 'boolean' | 'select' | 'combobox' | 'list' | 'lineList' | 'datetime' | 'numberList'
-    | 'keyValue' | 'array' | 'section' | 'toggle' | 'json';
+    | 'multiSelect' | 'keyValue' | 'array' | 'section' | 'toggle' | 'json';
+  numericOptions?: boolean;
   options?: string[] | ((outbound: Outbound) => string[]);
   placeholder?: string;
   showIf?: (outbound: Outbound, itemContext: ItemContext) => boolean;

@@ -113,7 +113,8 @@ export const protocolFields: Record<string, FieldDef[]> = {
   ],
   wireguard: [
     { ...setting('secretKey', 'Private Key'), generate: 'x25519' }, setting('address', 'Address', 'list'), setting('mtu', 'MTU', 'number'),
-    setting('noKernelTun', 'No Kernel Tun', 'boolean'), setting('reserved', 'Reserved', 'numberList'),
+    setting('noKernelTun', 'No Kernel Tun', 'boolean'), setting('domainStrategy', 'Domain Strategy', 'select', strategy),
+    setting('reserved', 'Reserved', 'numberList'),
     setting('remoteDNS', 'Remote DNS', 'list'),
     { path: ['settings', 'peers'], label: 'Peers', kind: 'array', defaults: wgPeer, fields: peerFields('preSharedKey') },
   ],
