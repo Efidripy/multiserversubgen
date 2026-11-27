@@ -23,7 +23,7 @@
 :root[data-design="new"] [data-ln="traffic"] .text-cyan-300 { color: var(--ln-text); }
 :root[data-design="new"] [data-ln="traffic"] .bg-gradient-to-r { background: var(--ln-muted); }
 @media (min-width: 1280px) {
-  :root[data-design="new"] [data-ln="traffic-tables"] { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+  :root[data-design="new"] [data-ln="traffic-tables"] { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
 }
 @media (max-width: 1023px) {
   :root[data-design="new"] [data-ln="monitoring-filters"] > div { flex-direction: column; gap: 4px; }
