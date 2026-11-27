@@ -92,3 +92,17 @@ def test_database_error_does_not_break_request(tmp_path):
                            [{'node_id': 1}])
     assert runtime.get_cached_clients([{'id': 1}]) == [{'node_id': 1}]
     runtime.invalidate()
+
+
+def test_inbound_columns_survive_offline_node_and_restart(tmp_path):
+    path = tmp_path / 'admin.db'
+    key = Fernet.generate_key()
+    row = {'node_id': 1, 'inbound_id': 7, 'protocol': ''}
+    metadata = {'7': {'protocol': 'vless', 'network': 'tcp'}}
+    runtime = make_runtime(path, key)
+    runtime.get_inbound_metadata = lambda node_id: metadata
+    runtime._store_cache([dict(row)], 0)
+    metadata = {}  # node went offline: the collector has no inbounds for it
+    runtime._store_cache([dict(row)], 0)
+    restored = make_runtime(path, key).clients_cache['data'][0]
+    assert (restored['protocol'], restored['network']) == ('vless', 'tcp')

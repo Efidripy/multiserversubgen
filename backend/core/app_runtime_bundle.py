@@ -224,6 +224,7 @@ def build_app_runtime_bundle(
         db_path=db_path,
         encrypt=encrypt,
         decrypt=decrypt,
+        get_inbound_metadata=snapshot_collector.inbound_metadata,
     )
 
     snapshot_collector.on_cycle_completed = clients_runtime.refresh_after_collector_cycle
