@@ -2,6 +2,9 @@ import json
 from unittest.mock import MagicMock, patch
 from client_manager import ClientManager, trojan_public_identifier
 from modules.auth.service import AuthService
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from routers.clients import build_clients_router
 
 
 def response(status, data=None):
@@ -89,3 +92,35 @@ def test_v3_replacement_keeps_fields_partial_updates_do_not_know():
         assert manager.replace_client_record({}, 1, "u", current, {**current, "comment": "new"}) == "ok"
     assert request.call_args.kwargs["json"] == {
         "id": "u", "email": "one", "limitHwid": 2, "trafficReset": "daily", "custom": 1, "comment": "new"}
+
+
+def test_v3_update_preserves_reset_and_forwarded_ports_only_when_present():
+    fields = {"resetDay": 4, "resetWeekday": 2, "resetMax": 9, "forwardedPorts": [80, 443]}
+    assert ClientManager._v3_update_payload({"uuid": "u", **fields}, {"email": "new"}) == {
+        "id": "u", "email": "new", **fields,
+    }
+    assert ClientManager._v3_update_payload({"uuid": "u"}, {}) == {"id": "u"}
+
+
+def test_v3_record_route_returns_inbound_protocol_and_survives_lookup_failure():
+    manager = ClientManager(decrypt_func=lambda value: value)
+    node = {"id": 1, "name": "node"}
+    value = {"id": 5, "uuid": "u", "email": "one", "inboundIds": [17]}
+    app = FastAPI()
+    app.include_router(build_clients_router(
+        check_auth=lambda request: True, client_mgr=manager, db_path="unused",
+        get_cached_clients=lambda *args: [], node_service=MagicMock(),
+        get_node_or_404=lambda node_id: node, invalidate_live_stats_cache=lambda: None,
+        invalidate_subscription_cache=lambda: None, ws_manager=MagicMock(),
+    ))
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), "https://panel")), \
+            patch("client_manager.xui_request", return_value=response(200, {"success": True, "obj": [value]})), \
+            patch.object(manager, "_fetch_inbounds_from_node") as fetch:
+        fetch.return_value = [{"id": 16, "protocol": "trojan"}, {"id": 17, "protocol": "vless"}]
+        client = TestClient(app)
+        result = client.get("/api/v1/clients/u/record?node_id=1&inbound_id=17")
+        assert result.json() == {"value": value, "protocol": "vless"}
+        fetch.side_effect = RuntimeError("unavailable")
+        result = client.get("/api/v1/clients/u/record?node_id=1&inbound_id=17")
+        assert result.status_code == 200
+        assert result.json() == {"value": value, "protocol": ""}

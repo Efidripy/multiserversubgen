@@ -46,6 +46,16 @@ describe('client schema', () => {
     expect(changed).toHaveBeenLastCalledWith({ id: 3, uuid: 'new', reverse: { other: true, tag: 'tag' }, extra: 7 });
   });
 
+  it('shows only reset fields present in the record and retains forwarded ports', () => {
+    const changed = vi.fn();
+    form('vless', { resetDay: 3, resetMax: 5, forwardedPorts: [80] }, changed);
+    expect(screen.getByLabelText('Reset day')).toBeTruthy();
+    expect(screen.getByLabelText('Reset max')).toBeTruthy();
+    expect(screen.queryByLabelText('Reset weekday')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Reset day'), { target: { value: '4' } });
+    expect(changed).toHaveBeenLastCalledWith({ resetDay: 4, resetMax: 5, forwardedPorts: [80] });
+  });
+
   it('converts quota and delayed expiry and supports a date with time', () => {
     const changed = vi.fn();
     form('vmess', { totalGB: 2 ** 30, expiryTime: -2 * 86400000 }, changed);

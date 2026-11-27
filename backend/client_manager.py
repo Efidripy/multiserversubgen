@@ -500,6 +500,7 @@ class ClientManager:
             "preSharedKey", "keepAlive", "secret", "adTag", "email", "limitIp",
             "totalGB", "expiryTime", "enable", "tgId", "subId", "group",
             "comment", "reset", "limitHwid", "trafficReset", "trafficResetDay",
+            "resetDay", "resetWeekday", "resetMax", "forwardedPorts",
         )
         for field in preserved_fields:
             if field in existing:
@@ -1199,7 +1200,17 @@ class ClientManager:
             if not session:
                 return None
             record = self._read_client_record(session, base_url, node, inbound_id, identifier)
-            return record[1] if record else None
+            if not record:
+                return None
+            protocol = ""
+            try:
+                inbounds = [record[2]] if record[0] == "v2" else self._fetch_inbounds_from_node(node)
+                inbound = next((item for item in inbounds if isinstance(item, dict) and item.get("id") == inbound_id), {})
+                candidate = inbound.get("protocol")
+                protocol = candidate if isinstance(candidate, str) else ""
+            except Exception:
+                pass
+            return {"value": record[1], "protocol": protocol}
         except Exception:
             return None
 

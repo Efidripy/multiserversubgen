@@ -26,6 +26,6 @@ describe('SYSTEM client classification', () => {
 
     expect(snapshotSource).toContain('"comment": client.get("comment", ""),');
     expect(snapshotSource).toContain('"is_system": is_system_client(client),');
-    expect(editorSource).toContain('clientFields(client.protocol, value)');
+    expect(editorSource).toContain('clientFields(protocol, value)');
   });
 });

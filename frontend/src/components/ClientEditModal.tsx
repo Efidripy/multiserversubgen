@@ -43,6 +43,7 @@ export function ClientEditModal({ client, onClose, onSaved }: Props) {
   const { colors } = useTheme();
   const [text, setText] = useState('');
   const [expected, setExpected] = useState<RecordValue | null>(null);
+  const [recordProtocol, setRecordProtocol] = useState('');
   const [identifier, setIdentifier] = useState(client.id || client.email);
   const [notes, setNotes] = useState(client.notes || '');
   const [savedNotes, setSavedNotes] = useState(client.notes || '');
@@ -58,6 +59,7 @@ export function ClientEditModal({ client, onClose, onSaved }: Props) {
     api.get(initialUrl, {
       auth: getAuth(), signal: controller.signal, params: { node_id: client.node_id, inbound_id: client.inbound_id },
     }).then(({ data }) => {
+      setRecordProtocol(data.protocol || '');
       setExpected(data.value);
       setText(JSON.stringify(data.value, null, 2));
     }).catch(err => { if (!controller.signal.aborted) setError(err?.response?.data?.detail || err.message); });
@@ -141,6 +143,7 @@ export function ClientEditModal({ client, onClose, onSaved }: Props) {
   const used = client.up + client.down;
   const pct = client.total > 0 ? Math.min(100, used / client.total * 100) : 0;
   const usageColor = pct >= 90 ? colors.danger : pct >= 70 ? colors.warning : '#c45bcc';
+  const protocol = recordProtocol || client.protocol;
   return <div data-ln="client-edit" className="drawer" role="dialog" aria-modal="true" aria-label={t('messages.editClient')}>
     <div className="drawer__backdrop" onClick={() => { if (!busy) onClose(); }} />
     <div className="drawer__panel">
@@ -160,10 +163,10 @@ export function ClientEditModal({ client, onClose, onSaved }: Props) {
         {expected && !value && <div role="alert">{t('nodeOps.invalidShape')}</div>}
         {mode === 'json' ? <LazyJsonEditor label="JSON" value={text} onChange={setText} readOnly={!expected || busy} /> :
           value && <fieldset className="m-0 min-w-0 border-0 p-0" disabled={busy}>
-            <SchemaForm value={value} fields={clientFields(client.protocol, value)} onChange={update} />
+            <SchemaForm value={value} fields={clientFields(protocol, value)} onChange={update} />
           </fieldset>}
         <div className="d-flex flex-wrap gap-2 mt-3">
-          {client.protocol === 'vless' && <button className="btn btn-sm btn-ghost-secondary"
+          {protocol === 'vless' && <button className="btn btn-sm btn-ghost-secondary"
             disabled={busy || !value || !client.node_id} onClick={() => void generate('vless')}>
             {t('clients.generateVlessEncryption')}</button>}
           <button className="btn btn-sm btn-ghost-secondary" disabled={busy || !value || !client.node_id}

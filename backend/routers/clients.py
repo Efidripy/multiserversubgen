@@ -443,10 +443,10 @@ def build_clients_router(
         if not check_auth(request):
             raise HTTPException(status_code=401)
         node = await _run(get_node_or_404, node_id)
-        value = await _run(client_mgr.read_client_record, node, inbound_id, client_uuid)
-        if value is None:
+        record = await _run(client_mgr.read_client_record, node, inbound_id, client_uuid)
+        if record is None:
             raise HTTPException(status_code=502, detail="Unable to read client from node")
-        return ORJSONResponse(content={"value": value}, headers={"Cache-Control": "no-store"})
+        return ORJSONResponse(content=record, headers={"Cache-Control": "no-store"})
 
     @router.put("/api/v1/clients/{client_uuid}/record")
     async def replace_client_record(request: Request, client_uuid: str, data: Dict):

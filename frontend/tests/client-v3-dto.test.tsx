@@ -91,6 +91,18 @@ describe('3x-ui v3 client DTO', () => {
     return requests;
   }
 
+  it('uses the record protocol for v3 protocol fields and generation', async () => {
+    api.defaults.adapter = async (config: any) => ({
+      data: { value: { ...record, id: 7, uuid: 'protocol-client-id', flow: 'xtls-rprx-vision' }, protocol: 'vless' },
+      status: 200, statusText: 'OK', headers: {}, config,
+    });
+    render(<ThemeProvider><ClientEditModal client={{ ...client, id: 'protocol-client-id', protocol: '' }}
+      onClose={() => undefined} onSaved={() => undefined} /></ThemeProvider>);
+    expect(await screen.findByLabelText('UUID')).toBeTruthy();
+    expect(screen.getByLabelText('Flow')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Generate VLESS Encryption/i })).toBeTruthy();
+  });
+
   it('saves the exact record and expected without sending unchanged notes', async () => {
     const requests = setup();
     await screen.findByDisplayValue('alice@example.test');
