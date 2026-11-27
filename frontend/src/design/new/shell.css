@@ -167,6 +167,8 @@
   line-height: 1.35;
   text-overflow: clip;
 }
+/* Wrapped hidden labels would stack letter by letter and stretch the scrolling nav. */
+:root[data-design="new"] .sidebar--collapsed .sidebar__nav-label { overflow: hidden; white-space: nowrap; }
 :root[data-design="new"] .sidebar__nav-item::before { content: none; }
 :root[data-design="new"] .sidebar__nav-item:hover:not(:disabled) { background: var(--ln-surface-hover); color: var(--ln-text); }
 :root[data-design="new"] .sidebar__nav-item--active { background: var(--ln-surface-2); color: var(--ln-text); }
