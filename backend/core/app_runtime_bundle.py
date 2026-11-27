@@ -223,6 +223,8 @@ def build_app_runtime_bundle(
         filter_reachable_nodes=snapshot_collector.filter_reachable_nodes,
     )
 
+    snapshot_collector.on_cycle_completed = clients_runtime.refresh_after_collector_cycle
+
     inbounds_runtime = InboundsRuntime(
         inbound_mgr=inbound_mgr,
         inbounds_cache=inbounds_cache,

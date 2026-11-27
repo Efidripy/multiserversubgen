@@ -243,7 +243,7 @@ def _env_float(name: str, default: float) -> float:
 
 VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
 
-XUI_MAX_CONNECT_TIMEOUT_SEC = 3.0
+XUI_MAX_CONNECT_TIMEOUT_SEC = 5.0
 XUI_MAX_READ_TIMEOUT_SEC = 4.0
 XUI_CONNECT_TIMEOUT_SEC = min(
     XUI_MAX_CONNECT_TIMEOUT_SEC,

@@ -63,7 +63,7 @@ _DASHBOARD_SNAPSHOT_FIELDS = (
 _CLIENT_PRESENCE_RETENTION_SEC = 30 * 24 * 60 * 60
 # Keep brief transport outages eligible for a bounded live-read retry.
 _UNREACHABLE_AFTER_SEC = 600.0
-_TRANSPORT_FAILURE_BACKOFF_SEC = (300.0, 600.0, 900.0)
+_TRANSPORT_FAILURE_BACKOFF_SEC = (60.0, 300.0, 900.0)
 _TRANSPORT_DIAGNOSTIC_INTERVAL_SEC = 900.0
 _INVENTORY_RECHECK_SEC = 60.0
 # Keep route reads bounded while allowing collector snapshots to serve briefly.
@@ -166,6 +166,7 @@ class SnapshotCollector:
         sqlite_batch_rows_metric=None,
         cycle_clock: Callable[[], float] = time.perf_counter,
     ):
+        self.on_cycle_completed: Optional[Callable[[List[Dict], str], None]] = None
         self.fetch_nodes = fetch_nodes
         self.xui_monitor = xui_monitor
         self.ws_manager = ws_manager
@@ -951,6 +952,13 @@ class SnapshotCollector:
                         await self._notify_completed_snapshots(durable_snapshots)
                     for snapshot in completed_snapshots:
                         snapshot.pop("_transient_transport_failure", None)
+
+                if self._running and (self._worker_tracker is None or self._worker_tracker.accepting):
+                    try:
+                        if self.on_cycle_completed is not None:
+                            self.on_cycle_completed(nodes, self._mode.value)
+                    except Exception:
+                        logger.exception("Collector cache refresh scheduling failed")
 
                 self._last_cycle = {
                     "started_at": cycle_started,

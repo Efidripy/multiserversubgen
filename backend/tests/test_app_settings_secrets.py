@@ -311,5 +311,5 @@ def test_clients_cache_ttl_defaults(monkeypatch):
     monkeypatch.delenv("CLIENTS_CACHE_TTL", raising=False)
     monkeypatch.delenv("CLIENTS_CACHE_STALE_TTL", raising=False)
     settings = load_app_settings(parse_mfa_users=_parse_mfa_users)
-    assert settings.clients_cache_ttl == 20
-    assert settings.clients_cache_stale_ttl == 900
+    assert settings.clients_cache_ttl == 60
+    assert settings.clients_cache_stale_ttl == 86400

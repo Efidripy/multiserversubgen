@@ -18,7 +18,7 @@ def test_xui_timeout_is_hard_capped():
 
     connect_timeout, read_timeout = bounded_xui_timeout(180)
 
-    assert connect_timeout <= 3.0
+    assert connect_timeout <= 5.0
     assert read_timeout <= 4.0
 
 
@@ -438,7 +438,7 @@ def test_snapshot_collector_opens_timeout_circuit():
     state = collector._node_state["Server-6"]
     snapshot = collector._latest["nodes"]["Server-6"]
 
-    assert state["interval"] == 300.0
+    assert state["interval"] == 60.0
     assert state["circuit_until"] > time.time()
     assert snapshot["available"] is False
     assert snapshot["status"] == "offline"

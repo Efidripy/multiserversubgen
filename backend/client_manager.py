@@ -802,16 +802,20 @@ class ClientManager:
         Returns:
             Список клиентов с метаданными
         """
+        return self._get_all_clients_with_status(nodes, email_filter)[0]
+
+    def _get_all_clients_with_status(self, nodes, email_filter=None):
         if not nodes:
-            return []
+            return [], set()
 
         needle = email_filter.lower() if email_filter else ""
 
-        def _collect_node_clients(node: Dict) -> List[Dict]:
+        def _collect_node_clients(node: Dict) -> tuple[List[Dict], bool]:
             node_clients: List[Dict] = []
+            success = True
             s, base_url = self._get_session(node)
             if not s:
-                return node_clients
+                return node_clients, False
 
             try:
                 # API version is telemetry, not routing authority.  Probe the
@@ -824,10 +828,10 @@ class ClientManager:
                         if needle and needle not in email.lower():
                             continue
                         node_clients.append(self._map_v3_client(c, node))
-                    return node_clients
+                    return node_clients, True
                 if v3_state != "unsupported":
                     logger.warning("v3 clients list failed for %s; legacy route was not assumed", node["name"])
-                    return node_clients
+                    return node_clients, False
 
                 # v2 fallback: извлекаем клиентов из инбаундов
                 inbounds = []
@@ -836,11 +840,15 @@ class ClientManager:
                         s, "GET", f"{base_url}/panel/api/inbounds/list",
                         timeout=XUI_FAST_TIMEOUT_SEC, retries=XUI_FAST_RETRIES,
                     )
-                    if inbounds_res.status_code == 200:
-                        data = inbounds_res.json()
-                        inbounds = data.get("obj", []) if data.get("success") else []
+                    if inbounds_res.status_code != 200:
+                        return node_clients, False
+                    data = inbounds_res.json()
+                    if not isinstance(data, dict) or not data.get("success") or not isinstance(data.get("obj"), list):
+                        return node_clients, False
+                    inbounds = data["obj"]
                 except Exception as exc:
                     logger.warning("Failed to fetch inbounds from %s: %s", node["name"], exc)
+                    return node_clients, False
 
                 for inbound in inbounds:
                     try:
@@ -874,19 +882,26 @@ class ClientManager:
                             })
                     except (TypeError, ValueError) as exc:
                         logger.warning("Invalid settings for inbound in %s: %s", node["name"], exc)
+                        success = False
             except Exception as exc:
                 logger.warning("Failed to fetch clients from %s: %s", node["name"], exc)
-            return node_clients
+                return node_clients, False
+            return node_clients, success
 
         all_clients: List[Dict] = []
-        futures = [_shared_executor.submit(_collect_node_clients, node) for node in nodes]
+        failed = set()
+        futures = {_shared_executor.submit(_collect_node_clients, node): node for node in nodes}
         for future in as_completed(futures):
             try:
-                all_clients.extend(future.result())
+                clients, success = future.result()
+                all_clients.extend(clients)
+                if not success:
+                    failed.add(futures[future].get("id"))
             except Exception as exc:
                 logger.warning(f"Failed to aggregate clients: {exc}")
+                failed.add(futures[future].get("id"))
 
-        return all_clients
+        return all_clients, failed
 
     def get_node_clients_strict(self, node: Dict) -> List[Dict]:
         """Read one node's full client projection or raise a typed-safe error.
