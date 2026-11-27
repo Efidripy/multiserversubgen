@@ -69,6 +69,31 @@ class ClientsRuntime:
                 self.clients_cache["ts"] = 0.0
                 self.clients_cache["invalidated"] = False
 
+    def _start_background_refresh(self, nodes: List[Dict], generation: int) -> None:
+        def refresh() -> None:
+            reachable = self._nodes_for_loader(nodes)
+            inventory_ids = {node.get("id") for node in nodes}
+            reachable_ids = {node.get("id") for node in reachable}
+            loader = getattr(self.client_mgr, "_get_all_clients_with_status", None)
+            if loader is None:
+                fresh = self.client_mgr.get_all_clients(reachable, email_filter=None)
+                failed = set()
+            else:
+                fresh, failed = loader(reachable, email_filter=None)
+            retained = (inventory_ids - reachable_ids) | failed
+            _, previous, _, _ = self._snapshot_cache()
+            merged = [client for client in fresh if client.get("node_id") not in retained]
+            merged.extend(client for client in previous if client.get("node_id") in retained)
+            self._store_cache(merged, generation)
+
+        self.start_cache_refresh("clients", refresh)
+
+    def refresh_after_collector_cycle(self, nodes: List[Dict], mode: str) -> None:
+        cached_at, _, generation, invalidated = self._snapshot_cache()
+        threshold = 300 if mode in ("warming", "active") else 1800
+        if not cached_at or invalidated or time.time() - cached_at >= threshold:
+            self._start_background_refresh(nodes, generation)
+
     def get_cached_clients(
         self, nodes: List[Dict], email_filter: Optional[str] = None, force: bool = False
     ) -> List[Dict]:
@@ -93,13 +118,7 @@ class ClientsRuntime:
         if full_list and invalidated:
             record_cache("memory_stale")
 
-            def _refresh() -> None:
-                fresh = self.client_mgr.get_all_clients(
-                    self._nodes_for_loader(nodes), email_filter=None
-                )
-                self._store_cache(fresh, generation)
-
-            self.start_cache_refresh("clients", _refresh)
+            self._start_background_refresh(nodes, generation)
             return _apply_filter(full_list)
 
         if full_list and now - cached_at < self.clients_cache_ttl:
@@ -109,13 +128,7 @@ class ClientsRuntime:
         if full_list and now - cached_at < self.clients_cache_stale_ttl:
             record_cache("memory_stale")
 
-            def _refresh() -> None:
-                fresh = self.client_mgr.get_all_clients(
-                    self._nodes_for_loader(nodes), email_filter=None
-                )
-                self._store_cache(fresh, generation)
-
-            self.start_cache_refresh("clients", _refresh)
+            self._start_background_refresh(nodes, generation)
             return _apply_filter(full_list)
 
         # A simultaneous cold navigation and header request must share one

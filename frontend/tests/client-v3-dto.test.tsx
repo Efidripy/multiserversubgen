@@ -54,6 +54,22 @@ describe('3x-ui v3 client DTO', () => {
     expect(client.telegram_linked).toBe(true);
   });
 
+  it('preserves inbound metadata only for the same client and inbound', () => {
+    const previous = normalizeClientRows([{ id: 'a', email: 'a@test', node_id: 1, inbound_id: 11,
+      protocol: 'vless', inbound_remark: 'main', security: 'none', network: 'ws' }]);
+    const incoming = normalizeClientRows([
+      { id: 'a', email: 'a@test', node_id: 1, inbound_id: 11, protocol: '', network: 'tcp' },
+      { id: 'a', email: 'a@test', node_id: 1, inbound_id: 12 },
+      { id: 'a', email: 'a@test', node_id: 2, inbound_id: 11 },
+    ]);
+    const [same, otherInbound, otherNode] = mergeClientRowsWithTelegramMetadata(previous, incoming);
+    expect(same).toMatchObject({ protocol: 'vless', inbound_remark: 'main', network: 'tcp' });
+    // security is the client's own cipher: an emptied value must not come back.
+    expect(same.security).toBeUndefined();
+    expect(otherInbound.protocol).toBeUndefined();
+    expect(otherNode.protocol).toBeUndefined();
+  });
+
   it('accepts an explicit unlink from an enriched response', () => {
     const previous = normalizeClientRows([{
       email: 'alice@example.test',

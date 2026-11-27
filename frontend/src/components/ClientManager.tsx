@@ -44,6 +44,7 @@ interface Client {
   down: number;
   expiryTime: number;
   inbound_id: number;
+  inbound_remark?: string;
   node_name: string;
   node_id?: number;
   protocol: string;
@@ -187,14 +188,21 @@ export const mergeClientRowsWithTelegramMetadata = (
     }
   });
 
+  const rowKey = (client: Client) => `${clientKey(client)}:${client.inbound_id ?? ''}`;
+  const previousRows = new Map(previous.map((client) => [rowKey(client), client]));
   return incoming.map((client) => {
-    if (Object.prototype.hasOwnProperty.call(client, 'telegram_linked')) {
-      return client;
+    const old = previousRows.get(rowKey(client));
+    const merged = { ...client };
+    if (old) {
+      for (const field of ['protocol', 'inbound_remark', 'network'] as const) {
+        if (!merged[field] && old[field]) merged[field] = old[field];
+      }
     }
-    const emailKey = normalizeClientEmail(client.email);
-    return linkedByEmail.has(emailKey)
-      ? { ...client, telegram_linked: true }
-      : client;
+    if (!Object.prototype.hasOwnProperty.call(client, 'telegram_linked') &&
+        linkedByEmail.has(normalizeClientEmail(client.email))) {
+      merged.telegram_linked = true;
+    }
+    return merged;
   });
 };
 

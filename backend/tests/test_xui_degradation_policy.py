@@ -54,7 +54,7 @@ def test_transport_backoff_stale_snapshot_and_recovery_are_bounded(monkeypatch, 
     key = collector._node_key(node)
 
     asyncio.run(collector._poll_node(node, key))
-    for expected_backoff in (300.0, 600.0, 900.0, 900.0):
+    for expected_backoff in (60.0, 300.0, 900.0, 900.0):
         monitor.available = False
         with caplog.at_level("INFO", logger="sub_manager"):
             asyncio.run(collector._poll_node(node, key))
@@ -92,9 +92,8 @@ def test_transport_backoff_stale_snapshot_and_recovery_are_bounded(monkeypatch, 
         if "Collector transport" in record.getMessage()
     ]
     assert transport_messages == [
-        "Collector transport unavailable; retry_in_sec=300",
-        "Collector transport failure persists: repeated_attempts=2 retry_in_sec=900",
-        "Collector transport failure persists: repeated_attempts=1 retry_in_sec=900",
+        "Collector transport unavailable; retry_in_sec=60",
+        "Collector transport failure persists: repeated_attempts=3 retry_in_sec=900",
         "Collector transport recovered after 4 failed attempt(s)",
     ]
     combined = "\n".join(transport_messages)

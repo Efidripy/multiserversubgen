@@ -209,6 +209,7 @@ def register_app_routers(
             client_mgr=client_mgr,
             db_path=db_path,
             get_cached_clients=get_cached_clients,
+            get_inbound_metadata=getattr(snapshot_collector, "inbound_metadata", None),
             node_service=node_service,
             get_node_or_404=get_node_or_404,
             invalidate_live_stats_cache=invalidate_live_stats_cache,

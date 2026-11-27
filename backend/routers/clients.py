@@ -188,6 +188,7 @@ def build_clients_router(
     invalidate_live_stats_cache,
     invalidate_subscription_cache,
     ws_manager,
+    get_inbound_metadata=None,
 ):
     router = APIRouter()
 
@@ -222,11 +223,26 @@ def build_clients_router(
         annotated = await _run(annotate_system_clients, annotated)
         # Dashboard/read-only DTOs must never expose panel credentials or
         # subscription secrets to viewer-role callers.
-        return [
+        result = [
             dashboard_safe_client(client)
             for client in annotated
             if isinstance(client, dict)
         ]
+        if get_inbound_metadata is not None:
+            metadata_by_node = {}
+            for client in result:
+                node_id = client.get("node_id")
+                inbound_id = client.get("inbound_id")
+                if node_id is None or inbound_id is None:
+                    continue
+                if node_id not in metadata_by_node:
+                    metadata_by_node[node_id] = get_inbound_metadata(node_id)
+                metadata = metadata_by_node[node_id].get(str(inbound_id), {})
+                # Client security is its cipher, not the inbound transport security.
+                for field in ("protocol", "inbound_remark", "network"):
+                    if not client.get(field) and metadata.get(field):
+                        client[field] = metadata[field]
+        return result
 
     @router.get("/api/v1/clients/count")
     async def count_clients(request: Request, node_id: Optional[int] = None):
