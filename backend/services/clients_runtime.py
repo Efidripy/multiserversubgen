@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
+import math
+import sqlite3
 import time
 from threading import Lock
 from typing import Callable, Dict, List, Optional
@@ -21,6 +24,9 @@ class ClientsRuntime:
         clients_cache_stale_ttl: int,
         start_cache_refresh,
         filter_reachable_nodes: Optional[Callable[[List[Dict]], List[Dict]]] = None,
+        db_path: Optional[str] = None,
+        encrypt: Optional[Callable[[str], str]] = None,
+        decrypt: Optional[Callable[[str], str]] = None,
     ) -> None:
         self.client_mgr = client_mgr
         self.clients_cache = clients_cache
@@ -31,6 +37,62 @@ class ClientsRuntime:
         self._cold_load_lock = Lock()
         self._cache_state_lock = Lock()
         self._cache_generation = 0
+        self._db_path = db_path if db_path and encrypt and decrypt else None
+        self._encrypt = encrypt
+        self._decrypt = decrypt
+        self._restore_cache()
+
+    def _restore_cache(self) -> None:
+        if not (self._db_path and self._decrypt):
+            return
+        try:
+            with sqlite3.connect(self._db_path, timeout=1) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS clients_cache_snapshot "
+                    "(id INTEGER PRIMARY KEY CHECK (id = 1), ts REAL NOT NULL, data TEXT NOT NULL)"
+                )
+                row = conn.execute(
+                    "SELECT ts, data FROM clients_cache_snapshot WHERE id = 1"
+                ).fetchone()
+            if not row:
+                return
+            ts = float(row[0])
+            if not math.isfinite(ts) or not 0 <= time.time() - ts < self.clients_cache_stale_ttl:
+                return
+            data = json.loads(self._decrypt(row[1]))
+            if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
+                raise ValueError("invalid cache")
+            self.clients_cache.update(ts=ts, data=data, invalidated=False)
+        except Exception:
+            logger.warning("Could not restore clients cache")
+
+    def _persist_cache(self, ts: float, data: List[Dict]) -> None:
+        if not (self._db_path and self._encrypt):
+            return
+        try:
+            encrypted = self._encrypt(json.dumps(data, ensure_ascii=False))
+            with sqlite3.connect(self._db_path, timeout=1) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS clients_cache_snapshot "
+                    "(id INTEGER PRIMARY KEY CHECK (id = 1), ts REAL NOT NULL, data TEXT NOT NULL)"
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO clients_cache_snapshot (id, ts, data) VALUES (1, ?, ?)",
+                    (ts, encrypted),
+                )
+        except Exception:
+            logger.warning("Could not save clients cache")
+
+    def _delete_persisted_cache(self) -> None:
+        if not self._db_path:
+            return
+        try:
+            with sqlite3.connect(self._db_path, timeout=1) as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS clients_cache_snapshot "
+                             "(id INTEGER PRIMARY KEY CHECK (id = 1), ts REAL NOT NULL, data TEXT NOT NULL)")
+                conn.execute("DELETE FROM clients_cache_snapshot WHERE id = 1")
+        except Exception:
+            logger.warning("Could not delete clients cache")
 
     def _nodes_for_loader(self, nodes: List[Dict]) -> List[Dict]:
         filtered = self.filter_reachable_nodes(nodes)
@@ -57,12 +119,14 @@ class ClientsRuntime:
             self.clients_cache["ts"] = time.time()
             self.clients_cache["data"] = data
             self.clients_cache["invalidated"] = False
+            self._persist_cache(self.clients_cache["ts"], data)
             return True
 
     def invalidate(self) -> None:
         """Invalidate a projection without discarding its last valid snapshot."""
         with self._cache_state_lock:
             self._cache_generation += 1
+            self._delete_persisted_cache()
             if self.clients_cache.get("data"):
                 self.clients_cache["invalidated"] = True
             else:
@@ -101,6 +165,9 @@ class ClientsRuntime:
         cached_at, full_list, generation, invalidated = self._snapshot_cache()
 
         def _apply_filter(items: List[Dict]) -> List[Dict]:
+            if self._db_path:
+                inventory_ids = {node.get("id") for node in nodes}
+                items = [item for item in items if item.get("node_id") in inventory_ids]
             if not email_filter:
                 return items
             needle = email_filter.lower()
