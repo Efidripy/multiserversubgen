@@ -9,7 +9,7 @@
  *
  * Sections: Basic → Transmission → Security → Sniffing → Raw JSON fallback
  */
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from './Toast';
 import { useTranslation } from 'react-i18next';
@@ -169,27 +169,26 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
   const [grpcMultiMode, setGrpcMultiMode] = useState<boolean>(Boolean(grpcS0.multiMode));
 
   // XHTTP settings
-  const [xhttpHost, setXhttpHost] = useState((xhttpS0.host || []).join(','));
+  const [xhttpHost, setXhttpHost] = useState(Array.isArray(xhttpS0.host) ? (xhttpS0.host[0] || '') : (xhttpS0.host || ''));
   const [xhttpPath, setXhttpPath] = useState(xhttpS0.path || '/');
   const [xhttpMode, setXhttpMode] = useState(xhttpS0.mode || 'auto');
   const [xhttpNoSSE, setXhttpNoSSE] = useState<boolean>(Boolean(xhttpS0.noSSEHeader));
-  const [xhttpMaxBuf, setXhttpMaxBuf] = useState(String(xhttpS0.maxBufferedSize ?? 30));
-  const [xhttpMaxUpload, setXhttpMaxUpload] = useState(String(xhttpS0.uploadSizeLimit ?? 1000000));
-  const [xhttpPadMin, setXhttpPadMin] = useState(String((xhttpS0.paddingBytes || '').toString().split('-')[0] || 100));
-  const [xhttpPadMax, setXhttpPadMax] = useState(String((xhttpS0.paddingBytes || '').toString().split('-')[1] || 1000));
+  const [xhttpMaxBuf, setXhttpMaxBuf] = useState(String(xhttpS0.scMaxBufferedPosts ?? xhttpS0.maxBufferedSize ?? 30));
+  const [xhttpMaxUpload, setXhttpMaxUpload] = useState(String(xhttpS0.scMaxEachPostBytes ?? xhttpS0.uploadSizeLimit ?? 1000000));
+  const [xhttpPadMin, setXhttpPadMin] = useState(String((xhttpS0.xPaddingBytes ?? xhttpS0.paddingBytes ?? '').toString().split('-')[0] || 100));
+  const [xhttpPadMax, setXhttpPadMax] = useState(String((xhttpS0.xPaddingBytes ?? xhttpS0.paddingBytes ?? '').toString().split('-')[1] || 1000));
 
   // HTTPUpgrade settings
   const [huHost, setHuHost] = useState(huS0.host || '');
   const [huPath, setHuPath] = useState(huS0.path || '/');
 
   // Sockopt
-  const sockEnabled = Boolean(ss0.sockopt && Object.keys(ss0.sockopt).length);
   const [tcpFastOpen, setTcpFastOpen] = useState<boolean>(Boolean(sockS0.tcpFastOpen));
-  const [multiPath, setMultiPath] = useState<boolean>(Boolean(sockS0.tcpMultiPath));
+  const [multiPath, setMultiPath] = useState<boolean>(Boolean(sockS0.tcpMptcp ?? sockS0.tcpMultiPath));
   const [domainStrategy, setDomainStrategy] = useState(sockS0.domainStrategy || '');
-  const [tcpCongestion, setTcpCongestion] = useState(sockS0.tcpCongestion || '');
+  const [tcpCongestion, setTcpCongestion] = useState(sockS0.tcpcongestion ?? sockS0.tcpCongestion ?? '');
   const [tproxy, setTproxy] = useState(sockS0.tproxy || 'off');
-  const [v6Only, setV6Only] = useState<boolean>(Boolean(sockS0.v6only));
+  const [v6Only, setV6Only] = useState<boolean>(Boolean(sockS0.V6Only ?? sockS0.v6only));
 
   // Reality settings
   const [realShow, setRealShow] = useState<boolean>(Boolean(realS0.show));
@@ -223,7 +222,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
   const [sniffFAKEDNS, setSniffFAKEDNS] = useState<boolean>((sn0.destOverride || []).includes('fakedns'));
   const [sniffMetaOnly, setSniffMetaOnly] = useState<boolean>(Boolean(sn0.metadataOnly));
   const [sniffRouteOnly, setSniffRouteOnly] = useState<boolean>(Boolean(sn0.routeOnly));
-  const [sniffIPsExcl, setSniffIPsExcl] = useState(commaSeparated(sn0.excludeForInbound));
+  const [sniffIPsExcl, setSniffIPsExcl] = useState(commaSeparated(sn0.ipsExcluded ?? sn0.excludeForInbound));
   const [sniffDomsExcl, setSniffDomsExcl] = useState(commaSeparated(sn0.domainsExcluded));
 
   // UI state
@@ -236,108 +235,87 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
   const [genVlessEncLoading, setGenVlessEncLoading] = useState(false);
 
   // ── Computed streamSettings ─────────────────────────────────────────────────
-  const buildStreamSettings = useCallback((): Record<string, any> => {
-    const result: Record<string, any> = { ...ss0, network, security };
-
-    // Clean up old network settings
-    delete result.wsSettings;
-    delete result.grpcSettings;
-    delete result.xhttpSettings;
-    delete result.httpupgradeSettings;
-    delete result.tcpSettings;
-
-    if (network === 'ws') {
-      result.wsSettings = { host: wsHost, path: wsPath, heartbeatPeriod: Number(wsHeartbeat) };
-    } else if (network === 'grpc') {
-      result.grpcSettings = { serviceName: grpcService, multiMode: grpcMultiMode };
-    } else if (network === 'xhttp') {
-      result.xhttpSettings = {
-        // Current Xray adds session-ID/XMUX fields faster than the form can
-        // expose them.  Preserve unknown values on a form save; only the
-        // fields represented by this UI are intentionally overwritten.
-        ...xhttpS0,
-        host: xhttpHost ? xhttpHost.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
-        path: xhttpPath,
-        mode: xhttpMode,
-        noSSEHeader: xhttpNoSSE,
-        maxBufferedSize: Number(xhttpMaxBuf) || 30,
-        uploadSizeLimit: Number(xhttpMaxUpload) || 1000000,
-        paddingBytes: `${xhttpPadMin}-${xhttpPadMax}`,
-      };
-    } else if (network === 'httpupgrade') {
-      result.httpupgradeSettings = { host: huHost, path: huPath };
-    }
-
-    // Security
-    delete result.realitySettings;
-    delete result.tlsSettings;
-    if (security === 'reality') {
-      result.realitySettings = {
-        show: realShow,
-        dest: realDest,
-        xver: Number(realXver) || 0,
-        serverNames: realServerNames.split(',').map((s: string) => s.trim()).filter(Boolean),
-        privateKey: realPrivateKey,
-        shortIds: realShortIds.split(',').map((s: string) => s.trim()).filter(Boolean),
-        settings: { publicKey: realPublicKey, fingerprint: realFingerprint, spiderX: realSpiderX, show: realShow },
-      };
-    } else if (security === 'tls') {
-      result.tlsSettings = { serverName: tlsServerName, allowInsecure: tlsAllowInsecure };
-    }
-
-    // Sockopt
-    if (sockEnabled) {
-      result.sockopt = {
-        ...sockS0,
-        tcpFastOpen,
-        tcpMultiPath: multiPath,
-        domainStrategy: domainStrategy || undefined,
-        tcpCongestion: tcpCongestion || undefined,
-        tproxy: tproxy !== 'off' ? tproxy : undefined,
-        v6only: v6Only,
-      };
-    } else {
-      delete result.sockopt;
-    }
-
+  const buildStreamSettings = (): Record<string, any> => {
+    const result: Record<string, any> = { ...ss0 };
+    const setChanged = (target: Record<string, any>, key: string, value: any, current: any, initial: any) => {
+      if (current !== initial) target[key] = value;
+    };
+    setChanged(result, 'network', network, network, ss0.network || 'tcp');
+    setChanged(result, 'security', security, security, ss0.security === 'reality' ? 'reality' : ss0.security === 'tls' ? 'tls' : 'none');
+    function section(key: string, original: object, edit: (value: any) => void) {
+      const value = { ...original };
+      edit(value);
+      if (Object.keys(value).length || key in ss0) result[key] = value;
+    };
+    if (network === 'ws') section('wsSettings', wsS0, v => {
+      setChanged(v, 'host', wsHost, wsHost, wsS0.host || '');
+      setChanged(v, 'path', wsPath, wsPath, wsS0.path || '/');
+      setChanged(v, 'heartbeatPeriod', Number(wsHeartbeat), wsHeartbeat, String(wsS0.heartbeatPeriod || 0));
+    });
+    if (network === 'grpc') section('grpcSettings', grpcS0, v => {
+      setChanged(v, 'serviceName', grpcService, grpcService, grpcS0.serviceName || '');
+      setChanged(v, 'multiMode', grpcMultiMode, grpcMultiMode, Boolean(grpcS0.multiMode));
+    });
+    if (network === 'xhttp') section('xhttpSettings', xhttpS0, v => {
+      const initialHost = Array.isArray(xhttpS0.host) ? (xhttpS0.host[0] || '') : (xhttpS0.host || '');
+      if (Array.isArray(xhttpS0.host) || xhttpHost !== initialHost) v.host = xhttpHost;
+      setChanged(v, 'path', xhttpPath, xhttpPath, xhttpS0.path || '/');
+      setChanged(v, 'mode', xhttpMode, xhttpMode, xhttpS0.mode || 'auto');
+      setChanged(v, 'noSSEHeader', xhttpNoSSE, xhttpNoSSE, Boolean(xhttpS0.noSSEHeader));
+      setChanged(v, 'scMaxBufferedPosts', Number(xhttpMaxBuf), xhttpMaxBuf, String(xhttpS0.scMaxBufferedPosts ?? xhttpS0.maxBufferedSize ?? 30));
+      setChanged(v, 'scMaxEachPostBytes', Number(xhttpMaxUpload), xhttpMaxUpload, String(xhttpS0.scMaxEachPostBytes ?? xhttpS0.uploadSizeLimit ?? 1000000));
+      const padding = String(xhttpS0.xPaddingBytes ?? xhttpS0.paddingBytes ?? '').split('-');
+      if (xhttpPadMin !== String(padding[0] || 100) || xhttpPadMax !== String(padding[1] || 1000)) v.xPaddingBytes = `${xhttpPadMin}-${xhttpPadMax}`;
+    });
+    if (network === 'httpupgrade') section('httpupgradeSettings', huS0, v => {
+      setChanged(v, 'host', huHost, huHost, huS0.host || '');
+      setChanged(v, 'path', huPath, huPath, huS0.path || '/');
+    });
+    if (security === 'reality') section('realitySettings', realS0, v => {
+      setChanged(v, 'show', realShow, realShow, Boolean(realS0.show));
+      setChanged(v, 'dest', realDest, realDest, realS0.dest || '');
+      setChanged(v, 'xver', Number(realXver), realXver, String(realS0.xver ?? 0));
+      setChanged(v, 'serverNames', csvValues(realServerNames), realServerNames, Array.isArray(realS0.serverNames) ? realS0.serverNames.join(',') : (realS0.serverNames || ''));
+      setChanged(v, 'privateKey', realPrivateKey, realPrivateKey, realS0.privateKey || '');
+      setChanged(v, 'shortIds', csvValues(realShortIds), realShortIds, Array.isArray(realS0.shortIds) ? realS0.shortIds.join(',') : (realS0.shortIds || ''));
+      const settings = { ...realS0.settings };
+      setChanged(settings, 'publicKey', realPublicKey, realPublicKey, realS0.settings?.publicKey || realS0.publicKey || '');
+      setChanged(settings, 'fingerprint', realFingerprint, realFingerprint, realS0.settings?.fingerprint || realS0.fingerprint || 'chrome');
+      setChanged(settings, 'spiderX', realSpiderX, realSpiderX, realS0.settings?.spiderX || realS0.spiderX || '/');
+      if (Object.keys(settings).length || 'settings' in realS0) v.settings = settings;
+    });
+    if (security === 'tls') section('tlsSettings', tlsS0, v => {
+      setChanged(v, 'serverName', tlsServerName, tlsServerName, tlsS0.serverName || '');
+      setChanged(v, 'allowInsecure', tlsAllowInsecure, tlsAllowInsecure, Boolean(tlsS0.allowInsecure));
+    });
+    section('sockopt', sockS0, v => {
+      setChanged(v, 'tcpFastOpen', tcpFastOpen, tcpFastOpen, Boolean(sockS0.tcpFastOpen));
+      setChanged(v, 'tcpMptcp', multiPath, multiPath, Boolean(sockS0.tcpMptcp ?? sockS0.tcpMultiPath));
+      setChanged(v, 'domainStrategy', domainStrategy, domainStrategy, sockS0.domainStrategy || '');
+      setChanged(v, 'tcpcongestion', tcpCongestion, tcpCongestion, sockS0.tcpcongestion ?? sockS0.tcpCongestion ?? '');
+      setChanged(v, 'tproxy', tproxy, tproxy, sockS0.tproxy || 'off');
+      setChanged(v, 'V6Only', v6Only, v6Only, Boolean(sockS0.V6Only ?? sockS0.v6only));
+    });
     return result;
-  }, [network, security, wsHost, wsPath, wsHeartbeat, grpcService, grpcMultiMode,
-    xhttpHost, xhttpPath, xhttpMode, xhttpNoSSE, xhttpMaxBuf, xhttpMaxUpload, xhttpPadMin, xhttpPadMax, xhttpS0,
-    huHost, huPath, realShow, realDest, realXver, realServerNames, realPrivateKey, realShortIds,
-    realPublicKey, realFingerprint, realSpiderX, tlsServerName, tlsAllowInsecure,
-    sockEnabled, tcpFastOpen, multiPath, domainStrategy, tcpCongestion, tproxy, v6Only]);
+  };
 
   const buildSniffing = (): Record<string, any> => {
-    const destOverride: string[] = [];
-    if (sniffHTTP) destOverride.push('http');
-    if (sniffTLS) destOverride.push('tls');
-    if (sniffQUIC) destOverride.push('quic');
-    if (sniffFAKEDNS) destOverride.push('fakedns');
-    // Keep fields introduced by newer Xray/3x-ui versions when an operator
-    // changes one of the controls represented by this form.
-    return {
-      ...sn0,
-      enabled: sniffEnabled,
-      destOverride,
-      metadataOnly: sniffMetaOnly,
-      routeOnly: sniffRouteOnly,
-      excludeForInbound: csvValues(sniffIPsExcl),
-      domainsExcluded: csvValues(sniffDomsExcl),
-    };
+    const result = { ...sn0 };
+    if (sniffEnabled !== Boolean(sn0.enabled)) result.enabled = sniffEnabled;
+    if (sniffMetaOnly !== Boolean(sn0.metadataOnly)) result.metadataOnly = sniffMetaOnly;
+    if (sniffRouteOnly !== Boolean(sn0.routeOnly)) result.routeOnly = sniffRouteOnly;
+    const known = ['http', 'tls', 'quic', 'fakedns'];
+    const initial = Array.isArray(sn0.destOverride) ? sn0.destOverride : [];
+    const selected = [sniffHTTP, sniffTLS, sniffQUIC, sniffFAKEDNS];
+    if (known.some((name, index) => selected[index] !== initial.includes(name))) {
+      result.destOverride = [...initial.filter((name: string) => !known.includes(name)), ...known.filter((_, index) => selected[index])];
+    }
+    if (sniffIPsExcl !== commaSeparated(sn0.ipsExcluded ?? sn0.excludeForInbound)) result.ipsExcluded = csvValues(sniffIPsExcl);
+    if (sniffDomsExcl !== commaSeparated(sn0.domainsExcluded)) result.domainsExcluded = csvValues(sniffDomsExcl);
+    return result;
   };
 
-  const sniffingChanged = (): boolean => {
-    const initialDestOverride = Array.isArray(sn0.destOverride) ? sn0.destOverride : [];
-    const currentDestOverride = buildSniffing().destOverride as string[];
-    return (
-      sniffEnabled !== Boolean(sn0.enabled)
-      || sniffMetaOnly !== Boolean(sn0.metadataOnly)
-      || sniffRouteOnly !== Boolean(sn0.routeOnly)
-      || currentDestOverride.join('\u0000') !== initialDestOverride.join('\u0000')
-      || sniffIPsExcl !== commaSeparated(sn0.excludeForInbound)
-      || sniffDomsExcl !== commaSeparated(sn0.domainsExcluded)
-    );
-  };
+  const sniffingChanged = (): boolean => JSON.stringify(buildSniffing()) !== JSON.stringify(sn0);
 
   const buildInboundSettings = (): Record<string, any> => {
     const result = { ...settings0 };
@@ -521,7 +499,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                 {network === 'xhttp' && (
                   <>
                     <Field label={t('inbounds.host')} colors={colors}>
-                      <TextInput value={xhttpHost} onChange={setXhttpHost} placeholder="comma-separated" colors={colors} />
+                      <TextInput value={xhttpHost} onChange={setXhttpHost} placeholder={t('inbounds.exampleDomainPlaceholder')} colors={colors} />
                     </Field>
                     <Field label={t('inbounds.path')} colors={colors}>
                       <TextInput value={xhttpPath} onChange={setXhttpPath} placeholder="/path" colors={colors} />
