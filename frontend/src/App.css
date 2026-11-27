@@ -414,6 +414,8 @@
   }
 
   .sidebar--collapsed .sidebar__nav {
+    /* A visible scrollbar would eat the narrow rail; wheel and keyboard still scroll. */
+    scrollbar-width: none;
     padding: 12px 8px;
   }
 
