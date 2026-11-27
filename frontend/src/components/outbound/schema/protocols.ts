@@ -74,8 +74,8 @@ export const protocolFields: Record<string, FieldDef[]> = {
     setting('rewriteAddress', 'Rewrite Address'), setting('rewritePort', 'Rewrite Port', 'number'),
     setting('userLevel', 'User Level', 'number'),
     { path: ['settings', 'rules'], label: 'Rules', kind: 'array', defaults: { action: 'direct' }, fields: [
-      child('action', 'Action', 'select', ['direct', 'drop', 'return', 'hijack']), child('qType', 'QType'),
-      child('domain', 'Domain', 'list'), child('rCode', 'RCode', 'number'),
+      child('action', 'Action', 'select', ['direct', 'drop', 'return', 'hijack']), { ...child('qType', 'QType'), write: v => typeof v === 'string' && /^[1-9]\d*$/.test(v) ? Number(v) : v },
+      child('domain', 'Domain', 'list'), { ...child('rCode', 'RCode', 'number'), clearValue: 0 },
     ] },
   ],
   vmess: [
@@ -91,8 +91,9 @@ export const protocolFields: Record<string, FieldDef[]> = {
       label: 'id', kind: 'text' },
     setting('encryption', 'Encryption'),
     setting('flow', 'Flow', 'select', ['', 'xtls-rprx-vision', 'xtls-rprx-vision-udp443']),
-    { ...setting('testpre', 'Test Pre', 'number'), showIf: vision },
-    { ...setting('testseed', 'Test Seed', 'numberList'), showIf: vision },
+    { ...setting('testpre', 'Test Pre', 'number'), showIf: vision, clearValue: (v: unknown) => typeof v !== 'number' || v <= 0 },
+    { ...setting('testseed', 'Test Seed', 'numberList'), showIf: vision,
+      clearValue: (v: unknown) => !Array.isArray(v) || v.length !== 4 || v.some(n => !Number.isInteger(n) || n <= 0) },
     { ...field(['settings', 'reverse', 'tag'], 'Reverse Tag'), clearValue: '' },
     { ...sniffing(['settings', 'reverse', 'sniffing']), showIf: o => !!o.settings?.reverse?.tag },
   ],
@@ -111,7 +112,7 @@ export const protocolFields: Record<string, FieldDef[]> = {
     field([...servers, 'users', 0, 'pass'], 'Password'), setting('headers', 'Headers', 'keyValue'),
   ],
   wireguard: [
-    setting('secretKey', 'Private Key'), setting('address', 'Address', 'list'), setting('mtu', 'MTU', 'number'),
+    { ...setting('secretKey', 'Private Key'), generate: 'x25519' }, setting('address', 'Address', 'list'), setting('mtu', 'MTU', 'number'),
     setting('noKernelTun', 'No Kernel Tun', 'boolean'), setting('reserved', 'Reserved', 'numberList'),
     setting('remoteDNS', 'Remote DNS', 'list'),
     { path: ['settings', 'peers'], label: 'Peers', kind: 'array', defaults: wgPeer, fields: peerFields('preSharedKey') },
@@ -120,7 +121,7 @@ export const protocolFields: Record<string, FieldDef[]> = {
   masque: [...server(['settings']), setting('remoteDNS', 'Remote DNS', 'list')],
   loopback: [setting('inboundTag', 'Inbound Tag'), sniffing(['settings', 'sniffing'])],
   amneziawg: [
-    setting('mtu', 'MTU', 'number'), setting('listenPort', 'Listen Port', 'number'), setting('secretKey', 'Private Key'),
+    setting('mtu', 'MTU', 'number'), setting('listenPort', 'Listen Port', 'number'), { ...setting('secretKey', 'Private Key'), generate: 'x25519' },
     field(['settings', 'address', 0], 'Address'), setting('dns', 'DNS'), setting('headerProtectionKey', 'Header Protection Key'),
     { path: ['settings'], label: 'Obfuscation', kind: 'section', fields: [
       ...['jc', 'jmin', 'jmax', 's1', 's2', 's3', 's4'].map(name => setting(name, name.toUpperCase(), 'number')),

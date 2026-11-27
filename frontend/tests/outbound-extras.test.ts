@@ -48,7 +48,7 @@ describe('outbound extra schemas', () => {
       ...['client.*', 'server.*'].flatMap(group => 'type reuse transform rand randRange packet capture'.split(' ')
         .map(p => `streamSettings.finalmask.udp.*.settings.${group}.${p}`)),
       ...'type delay rand randRange packet'.split(' ').map(p => `streamSettings.finalmask.udp.*.settings.noise.*.${p}`),
-      ...`congestion bbrProfile debug brutalUp brutalDown brutalDisableLossCompensation udpHop.ports udpHop.interval
+      ...`congestion bbrProfile debug brutalUp brutalDown brutalDisableLossCompensation
         maxIdleTimeout keepAlivePeriod disablePathMTUDiscovery disableChromeParrot disableGSO disableStatelessReset
         maxIncomingStreams initStreamReceiveWindow maxStreamReceiveWindow initConnectionReceiveWindow maxConnectionReceiveWindow`
         .trim().split(/\s+/).map(p => `streamSettings.finalmask.quicParams.${p}`),

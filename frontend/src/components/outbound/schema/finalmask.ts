@@ -1,4 +1,4 @@
-import { getPath } from '../paths';
+import { getPath, setPath } from '../paths';
 import type { FieldDef, ItemContext, Outbound } from '../types';
 
 const base = ['streamSettings', 'finalmask'];
@@ -11,17 +11,43 @@ const settings = (name: string, label: string, kind: FieldDef['kind'], types: st
   path: ['settings', name], label, kind, options, showIf: maskType(types),
 });
 const tcp = ['fragment', 'header-custom', 'sudoku', 'xmc'];
-const udp = ['salamander', 'mkcp-legacy', 'xdns', 'xicmp', 'realm', 'header-custom', 'noise', 'sudoku', 'udphop', 'filter'];
+const udp = ['salamander', 'mkcp-legacy', 'xdns', 'xicmp', 'realm', 'header-custom', 'noise', 'sudoku', 'udphop'];
+const maskSelector = (options: string[]): FieldDef => ({
+  path: ['type'], label: 'Type', kind: 'select', options,
+  onChange: (o, type, path, previous) => {
+    const settingsPath = [...path.slice(0, -1), 'settings'];
+    const old = getPath(o, settingsPath);
+    if (old && Object.keys(old).length && !window.confirm('Replace mask settings?')) return previous;
+    const defaults: Record<string, Outbound> = {
+      fragment: { packets: '1-3', lengths: ['100-200'], delays: [], maxSplit: '' },
+      salamander: { password: '' }, sudoku: { password: '', ascii: '', customTable: '', customTables: [], paddingMin: 0, paddingMax: 0 },
+      xmc: { hostname: '', password: '', profiles: [{ username: '', uuid: '', texturesValue: '', texturesSignature: '' }] },
+      xdns: { domains: [] }, udphop: { mode: 'intervalRemote', interval: '5-10' },
+      'header-custom': { clients: [], servers: [], client: [], server: [] }, noise: { reset: 0, noise: [] },
+    };
+    return setPath(o, settingsPath, defaults[String(type)] || {});
+  },
+});
 const packets = (isTcp: boolean, noise = false): FieldDef[] => [
+  ...(!noise ? [{ path: ['kind'], label: 'Kind', kind: 'select', options: ['bytes', 'reuse', 'transform'], uiOnly: true,
+    read: (_: unknown, o: Outbound, p: (string | number)[]) => {
+      const item = getPath(o, p.slice(0, -1)); return item?.reuse !== undefined ? 'reuse' : item?.transform !== undefined ? 'transform' : 'bytes';
+    },
+    onChange: (o: Outbound, v: unknown, p: (string | number)[]) => {
+      const item = getPath(o, p.slice(0, -1));
+      for (const key of ['type', 'packet', 'rand', 'randRange', 'reuse', 'transform']) delete item[key];
+      if (v === 'bytes') { item.type = 'array'; item.rand = 0; }
+      else item[String(v)] = v === 'transform' ? {} : ''; return { ...o };
+    } } as FieldDef] : []),
   { path: ['type'], label: 'Type', kind: 'select', options: ['array', 'str', 'hex', 'base64', ...(noise ? ['exp'] : [])] },
   ...(isTcp || noise ? [{ path: ['delay'], label: 'Delay', kind: noise ? 'text' : 'number' } as FieldDef] : []),
-  { path: ['rand'], label: 'Rand', kind: noise ? 'text' : 'number', showIf: (_, ctx) => ctx?.value.type === 'array' },
-  { path: ['randRange'], label: 'Rand Range', kind: 'text', showIf: (_, ctx) => ctx?.value.type === 'array' },
-  { path: ['packet'], label: 'Packet', kind: 'json', showIf: (_, ctx) => ctx?.value.type === 'array' },
-  { path: ['packet'], label: 'Packet', kind: 'text', showIf: (_, ctx) => ctx?.value.type !== 'array' },
+  { path: ['rand'], label: 'Rand', kind: noise ? 'text' : 'number', showIf: (_, ctx) => ctx?.value.type === 'array' && ctx?.value.reuse === undefined && ctx?.value.transform === undefined },
+  { path: ['randRange'], label: 'Rand Range', kind: 'text', showIf: (_, ctx) => ctx?.value.type === 'array' && ctx?.value.reuse === undefined && ctx?.value.transform === undefined },
+  { path: ['packet'], label: 'Packet', kind: 'json', showIf: (_, ctx) => ctx?.value.type === 'array' && ctx?.value.reuse === undefined && ctx?.value.transform === undefined },
+  { path: ['packet'], label: 'Packet', kind: 'text', showIf: (_, ctx) => ctx?.value.type !== 'array' && ctx?.value.reuse === undefined && ctx?.value.transform === undefined },
   ...(!noise ? [
-    { path: ['reuse'], label: 'Reuse', kind: 'text' } as FieldDef,
-    { path: ['transform'], label: 'Transform', kind: 'json' } as FieldDef,
+    { path: ['reuse'], label: 'Reuse', kind: 'text', showIf: (_, c) => c?.value?.reuse !== undefined } as FieldDef,
+    { path: ['transform'], label: 'Transform', kind: 'json', showIf: (_, c) => c?.value?.transform !== undefined } as FieldDef,
     { path: ['capture'], label: 'Capture', kind: 'text', clearValue: '' } as FieldDef,
   ] : []),
 ];
@@ -33,7 +59,7 @@ const group = (name: string, isTcp: boolean): FieldDef => ({
 });
 const sudoku = ['sudoku'];
 const common: FieldDef[] = [
-  settings('password', 'Password', 'text', ['xmc', 'sudoku', 'salamander']),
+  { ...settings('password', 'Password', 'text', ['xmc', 'sudoku', 'salamander']), generate: 'password' },
   settings('ascii', 'ASCII', 'text', sudoku),
   settings('customTable', 'Custom Table', 'text', sudoku),
   settings('customTables', 'Custom Tables', 'list', sudoku),
@@ -41,7 +67,7 @@ const common: FieldDef[] = [
   settings('paddingMax', 'Padding Max', 'number', sudoku),
 ];
 const tcpFields: FieldDef[] = [
-  { path: ['type'], label: 'Type', kind: 'select', options: tcp },
+  maskSelector(tcp),
   settings('packets', 'Packets', 'combobox', ['fragment'], ['tlshello', '1-3', '1-5']),
   settings('lengths', 'Lengths', 'list', ['fragment']),
   settings('delays', 'Delays', 'list', ['fragment']),
@@ -58,7 +84,7 @@ const tcpFields: FieldDef[] = [
   group('clients', true), group('servers', true), group('errors', true),
 ];
 const udpFields: FieldDef[] = [
-  { path: ['type'], label: 'Type', kind: 'select', options: udp },
+  maskSelector(udp),
   ...common,
   settings('header', 'Header', 'select', ['mkcp-legacy'], ['', 'dns', 'dtls', 'srtp', 'utp', 'wechat', 'wireguard']),
   settings('value', 'Value', 'text', ['mkcp-legacy']),
@@ -75,7 +101,11 @@ const udpFields: FieldDef[] = [
   { path: ['settings', 'tlsConfig', 'fingerprint'], label: 'Fingerprint', kind: 'combobox', showIf: maskType(['realm']),
     options: ['chrome', 'firefox', 'safari', 'ios', 'android', 'edge', '360', 'qq', 'random', 'randomized', 'unsafe'] },
   { path: ['settings', 'tlsConfig', 'allowInsecure'], label: 'Allow Insecure', kind: 'boolean', showIf: maskType(['realm']) },
-  settings('packetSize', 'Packet Size', 'text', ['salamander']),
+  { ...settings('modeUI', 'Mode', 'select', ['salamander'], ['salamander', 'gecko']), uiOnly: true,
+    read: (_, o, p) => getPath(o, [...p.slice(0, -1), 'packetSize']) === undefined ? 'salamander' : 'gecko',
+    onChange: (o, v, p) => setPath(o, [...p.slice(0, -1), 'packetSize'], v === 'gecko' ? '512-1200' : undefined) },
+  { ...settings('packetSize', 'Packet Size', 'text', ['salamander']),
+    showIf: (o, c) => maskType(['salamander'])(o, c) && !!c?.value?.settings?.packetSize },
   settings('mode', 'Mode', 'text', ['udphop']),
   settings('interval', 'Interval', 'text', ['udphop']),
   settings('remotePorts', 'Remote Ports', 'text', ['udphop']),
@@ -124,10 +154,6 @@ export const finalmaskFields: FieldDef[] = [{ path: base, label: 'Final Mask', k
     { path: [...quic, 'brutalDown'], label: 'Brutal Down', kind: 'text', showIf: congestion(['brutal', 'force-brutal']) },
     { path: [...quic, 'brutalDisableLossCompensation'], label: 'Disable Loss Compensation', kind: 'boolean',
       showIf: congestion(['brutal', 'force-brutal']) },
-    { path: [...quic, 'udpHop'], label: 'UDP Hop', kind: 'toggle', defaults: { ports: '20000-50000', interval: '5-10' }, fields: [
-      { path: [...quic, 'udpHop', 'ports'], label: 'Ports', kind: 'text' },
-      { path: [...quic, 'udpHop', 'interval'], label: 'Interval', kind: 'text' },
-    ] },
     { path: [...quic, 'maxIdleTimeout'], label: 'Max Idle Timeout', kind: 'number' },
     { path: [...quic, 'keepAlivePeriod'], label: 'Keep Alive Period', kind: 'number' },
     { path: [...quic, 'disablePathMTUDiscovery'], label: 'Disable Path MTU Discovery', kind: 'boolean' },

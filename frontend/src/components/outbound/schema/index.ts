@@ -11,16 +11,16 @@ import { finalmaskFields } from './finalmask';
 export function outboundSchema(value: Outbound, tags: string[]): FieldDef[] {
   const protocol = value.protocol;
   const network = value.streamSettings?.network || 'tcp';
-  const security = protocol === 'hysteria' ? 'tls' : value.streamSettings?.security || 'none';
+  const security = ['hysteria', 'masque'].includes(protocol) ? 'tls' : value.streamSettings?.security || 'none';
   const transport = !['freedom', 'blackhole', 'wireguard', 'hysteria', 'masque'].includes(protocol);
   return [
     ...common,
     ...(protocolFields[protocol] || []),
-    ...(transport ? [{ path: ['streamSettings', 'network'], label: 'transport', kind: 'select' as const,
+    ...(['hysteria', 'masque'].includes(protocol) ? [...transportFields[protocol], ...securityFields.tls] : transport ? [{ path: ['streamSettings', 'network'], label: 'transport', kind: 'select' as const,
       options: ['tcp', 'kcp', 'ws', 'grpc', 'httpupgrade', 'xhttp', ...(protocol === 'vless' ? ['xdrive'] : [])] },
     ...(transportFields[network] || []),
     { path: ['streamSettings', 'security'], label: 'security', kind: 'select' as const, options: ['none', 'tls', 'reality'] },
-    ...(securityFields[security] || [])] : protocol === 'hysteria' ? securityFields.tls : []),
+    ...(securityFields[security] || [])] : []),
     ...sockoptFields(tags),
     ...muxFields,
     ...finalmaskFields,

@@ -30,20 +30,32 @@ export function OutboundEditor({ initial, tags, onApply, onCancel }: {
     if (next.protocol !== draft.protocol) {
       if (Object.keys(draft.settings || {}).length && !window.confirm(t('nodeOps.changeProtocol'))) return;
       next.settings = structuredClone(protocolDefaults[next.protocol] || {});
-      if (next.protocol === 'hysteria' || next.protocol === 'masque') {
-        next.streamSettings = { ...next.streamSettings, network: next.protocol };
+      if (['hysteria', 'masque'].includes(next.protocol)) {
+        next.streamSettings = { network: next.protocol, security: 'tls',
+          [`${next.protocol}Settings`]: structuredClone(transportDefaults[next.protocol]),
+          tlsSettings: { ...structuredClone(securityDefaults.tls), alpn: ['h3'] } };
+      } else if (['hysteria', 'masque'].includes(draft.protocol)) {
+        next.streamSettings = { network: 'tcp', security: 'none', tcpSettings: structuredClone(transportDefaults.tcp) };
       }
     } else if (next.streamSettings?.network !== draft.streamSettings?.network) {
       const network = next.streamSettings?.network;
-      if (network && next.streamSettings[`${network}Settings`] === undefined) {
-        next.streamSettings[`${network}Settings`] = structuredClone(transportDefaults[network] || {});
-      }
+      const old = draft.streamSettings?.network || 'tcp';
+      if (draft.streamSettings?.[`${old}Settings`] && !window.confirm(t('nodeOps.removeBlockConfirm'))) return;
+      delete next.streamSettings[`${old}Settings`];
+      if (network) next.streamSettings[`${network}Settings`] = structuredClone(transportDefaults[network] || {});
+      if (network === 'xdrive') next.mux = { ...next.mux, enabled: true };
     } else if (next.streamSettings?.security !== draft.streamSettings?.security) {
       const security = next.streamSettings?.security;
-      if (security && security !== 'none' && next.streamSettings[`${security}Settings`] === undefined) {
-        next.streamSettings[`${security}Settings`] = structuredClone(securityDefaults[security] || {});
-      }
+      if ((draft.streamSettings?.tlsSettings || draft.streamSettings?.realitySettings) &&
+        !window.confirm(t('nodeOps.removeBlockConfirm'))) return;
+      delete next.streamSettings.tlsSettings;
+      delete next.streamSettings.realitySettings;
+      if (security && security !== 'none') next.streamSettings[`${security}Settings`] = structuredClone(securityDefaults[security] || {});
     }
+    if (next.protocol === 'vless' && next.settings?.flow &&
+      (next.settings.encryption !== 'none' || !['tcp', 'xhttp'].includes(next.streamSettings?.network || 'tcp') ||
+        !['tls', 'reality'].includes(next.streamSettings?.security))) delete next.settings.flow;
+    if (next.mux?.enabled === false) delete next.mux;
     update(next);
   };
   return <div className="flex min-h-0 flex-1 flex-col gap-2">

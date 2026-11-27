@@ -19,7 +19,10 @@ const downloadSecurity = (type: string) => (o: Outbound) => o.streamSettings?.xh
 const downloadFields: FieldDef[] = [
   downloadField('address', 'Address'), downloadField('port', 'Port', 'number'),
   downloadField('xhttpSettings.host', 'Host'), downloadField('xhttpSettings.path', 'Path'),
-  downloadField('security', 'Security', 'select', ['none', 'tls', 'reality']),
+  { ...downloadField('security', 'Security', 'select', ['none', 'tls', 'reality']), onChange: (o, v) => {
+    const d = o.streamSettings.xhttpSettings.downloadSettings; delete d.tlsSettings; delete d.realitySettings;
+    if (v === 'tls') d.tlsSettings = {};
+    if (v === 'reality') d.realitySettings = { fingerprint: 'chrome' }; return o; } },
   { ...downloadField('tlsSettings.serverName', 'TLS SNI'), showIf: downloadSecurity('tls') },
   ...['serverName', 'publicKey', 'fingerprint', 'shortId'].map(key => ({
     ...downloadField(`realitySettings.${key}`, `REALITY ${key}`, key === 'fingerprint' ? 'combobox' : 'text', fingerprints),
@@ -57,12 +60,22 @@ const xhttp: FieldDef[] = [
   })),
   { ...x('noGRPCHeader', 'No gRPC Header', 'boolean'), showIf: o => o.streamSettings?.xhttpSettings?.mode !== 'packet-up' },
   { path: [...base('xhttp'), 'xmux'], label: 'XMUX', kind: 'toggle', defaults: xmuxDefaults, fields: [
-    x('xmux.maxConcurrency', 'Max Concurrency'), x('xmux.maxConnections', 'Max Connections'),
+    { ...x('xmux.maxConcurrency', 'Max Concurrency'), onChange: (o, v) => {
+      if (Number(v) > 0) o.streamSettings.xhttpSettings.xmux.maxConnections = 0; return o; } },
+    { ...x('xmux.maxConnections', 'Max Connections'), onChange: (o, v) => {
+      if (Number(v) > 0) o.streamSettings.xhttpSettings.xmux.maxConcurrency = ''; return o; } },
     x('xmux.cMaxReuseTimes', 'Max Reuse Times'), x('xmux.hMaxRequestTimes', 'Max Request Times'),
     x('xmux.hMaxReusableSecs', 'Max Reusable Seconds'), x('xmux.hKeepAlivePeriod', 'Keep Alive Period', 'number'),
   ] },
   { path: download, label: ['Separate', 'Download'].join(' '), kind: 'toggle',
-    defaults: { network: 'xhttp', port: 443, security: 'tls', xhttpSettings: { path: '/' } },
+    defaults: (o: Outbound) => {
+      const upload = o.streamSettings?.xhttpSettings || {};
+      const keys = ['host', 'headers', 'sessionIDPlacement', 'sessionIDKey', 'sessionIDTable', 'sessionIDLength',
+        'seqPlacement', 'seqKey', 'xPaddingBytes', 'xPaddingObfsMode', 'xPaddingKey', 'xPaddingHeader',
+        'xPaddingPlacement', 'xPaddingMethod'];
+      return { network: 'xhttp', port: 443, security: 'tls', xhttpSettings: { path: upload.path || '/',
+        ...Object.fromEntries(keys.filter(key => upload[key] !== undefined).map(key => [key, upload[key]])) } };
+    },
     showIf: o => o.streamSettings?.xhttpSettings?.mode !== 'stream-one', fields: downloadFields },
 ];
 const raw = (key: string, label: string, kind: Kind = 'text') => at('tcp', `header.${key}`, label, kind);
@@ -75,7 +88,10 @@ const masq = (key: string, label: string, kind: Kind = 'text', options?: string[
 const masqType = (type: string) => (o: Outbound) => o.streamSettings?.hysteriaSettings?.masquerade?.type === type;
 const xdrive = (key: string, label: string, kind: Kind = 'text', options?: string[]) => at('xdrive', key, label, kind, options);
 export const transportFields: Record<string, FieldDef[]> = {
-  tcp: [at('tcp', 'header.type', 'HTTP Camouflage', 'select', ['none', 'http']),
+  tcp: [{ ...at('tcp', 'header.type', 'HTTP Camouflage', 'select', ['none', 'http']),
+    onChange: (o, v) => { o.streamSettings.tcpSettings.header = v === 'http'
+      ? { type: 'http', request: { version: '1.1', method: 'GET', path: ['/'], headers: {} },
+        response: { version: '1.1', status: '200', reason: 'OK', headers: {} } } : { type: 'none' }; return o; } },
     section('HTTP Camouflage Settings', rawFields.map(field => ({ ...field,
       showIf: o => o.streamSettings?.tcpSettings?.header?.type === 'http' })))],
   kcp: [at('kcp', 'mtu', 'MTU', 'number'), at('kcp', 'tti', 'TTI (ms)', 'number'),
@@ -111,7 +127,9 @@ export const transportFields: Record<string, FieldDef[]> = {
           .map(field => ({ ...field, showIf: masqType('string') }))] }],
   masque: [at('masque', 'host', 'Host'), at('masque', 'path', 'Path'),
     { path: [...base('masque'), 'warp'], label: 'WARP', kind: 'toggle',
-      defaults: { privateKey: '', publicKey: '', address: [] }, fields: [at('masque', 'warp.privateKey', 'Private Key'),
+      defaults: { privateKey: '', publicKey: '', address: [] },
+      onChange: (o, v) => { if (v) { delete o.streamSettings.masqueSettings.user; delete o.streamSettings.masqueSettings.pass; }
+        return o; }, fields: [at('masque', 'warp.privateKey', 'Private Key'),
         at('masque', 'warp.publicKey', 'Public Key'), at('masque', 'warp.address', 'Address', 'list')] },
     ...[at('masque', 'user', 'Username'), at('masque', 'pass', 'Password')]
       .map(field => ({ ...field, showIf: (o: Outbound) => o.streamSettings?.masqueSettings?.warp === undefined })),

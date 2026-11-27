@@ -10,5 +10,10 @@ export type FieldDef = {
   showIf?: (outbound: Outbound, itemContext: ItemContext) => boolean;
   clearValue?: unknown | ((value: unknown) => boolean);
   fields?: FieldDef[];
-  defaults?: unknown;
+  defaults?: unknown | ((outbound: Outbound) => unknown);
+  read?: (value: unknown, outbound: Outbound, path: Path) => unknown;
+  write?: (value: unknown, outbound: Outbound, path: Path) => unknown;
+  onChange?: (outbound: Outbound, value: unknown, path: Path, previous: Outbound) => Outbound;
+  uiOnly?: boolean;
+  generate?: 'password' | 'shortId' | 'x25519';
 };

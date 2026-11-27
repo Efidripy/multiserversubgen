@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { deletePath, getPath, setPath } from './paths';
 import type { FieldDef, ItemContext, Outbound, Path } from './types';
@@ -15,17 +15,53 @@ function JsonField({ value, onChange, label }: { value: unknown; onChange: (v: u
   }} />;
 }
 
+function Generator({ kind, onChange }: { kind: NonNullable<FieldDef['generate']>; onChange: (v: string) => void }) {
+  const [available, setAvailable] = useState(kind !== 'x25519' && typeof globalThis.crypto?.getRandomValues === 'function');
+  const [publicKey, setPublicKey] = useState('');
+  useEffect(() => {
+    if (kind !== 'x25519' || !globalThis.crypto?.subtle) return;
+    let active = true;
+    crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']).then(() => {
+      if (active) setAvailable(true);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [kind]);
+  if (!available) return null;
+  const generate = async () => {
+    if (kind === 'x25519') {
+      try {
+        const pair = await crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']) as CryptoKeyPair;
+        const privateJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+        const publicBytes = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+        if (!privateJwk.d) return;
+        const base64 = (s: string) => s.replace(/-/g, '+').replace(/_/g, '/').padEnd(44, '=');
+        onChange(base64(privateJwk.d));
+        setPublicKey(btoa(String.fromCharCode(...publicBytes)));
+      } catch { setAvailable(false); }
+      return;
+    }
+    const chars = kind === 'shortId' ? '0123456789abcdef' : 'abcdefghijklmnopqrstuvwxyz0123456789';
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    onChange(Array.from(bytes, b => chars[b % chars.length]).join(''));
+  };
+  return <span><button type="button" onClick={() => void generate()}>Regenerate</button>
+    {publicKey && <output>Public Key: {publicKey}</output>}</span>;
+}
+
 export function SchemaForm({ value, fields, onChange, context }: Props) {
   const { t } = useTranslation();
   const render = (field: FieldDef, index: number) => {
     if (field.showIf && !field.showIf(value, context)) return null;
     const relative = typeof field.path === 'function' ? field.path(value, context) : field.path;
     const path: Path = context && typeof field.path !== 'function' ? [...context.path, ...relative] : relative;
-    const current = getPath(value, path);
+    const stored = getPath(value, path);
+    const current = field.read ? field.read(stored, value, path) : stored;
     const options = typeof field.options === 'function' ? field.options(value) : field.options || [];
     const change = (next: unknown) => {
+      if (field.write) next = field.write(next, value, path);
       const clear = typeof field.clearValue === 'function' ? field.clearValue(next) : field.clearValue !== undefined && next === field.clearValue;
-      onChange(clear ? deletePath(value, path) : setPath(value, path, next));
+      const updated = field.uiOnly ? structuredClone(value) : clear ? deletePath(value, path) : setPath(value, path, next);
+      onChange(field.onChange ? field.onChange(updated, next, path, value) : updated);
     };
     const key = `${path.join('.')}-${index}`;
     if (field.kind === 'section') return <details key={key} className="sm:col-span-2"><summary>{t(field.label)}</summary>
@@ -33,7 +69,7 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
     </details>;
     if (field.kind === 'toggle') return <div key={key} className="sm:col-span-2"><label>
       <input type="checkbox" checked={current !== undefined} onChange={event => {
-        if (event.target.checked) change(structuredClone(field.defaults ?? {}));
+        if (event.target.checked) change(structuredClone(typeof field.defaults === 'function' ? field.defaults(value) : field.defaults ?? {}));
         else if (!current || !Object.keys(current).length || window.confirm(t('nodeOps.removeBlockConfirm'))) change(undefined);
       }} /> {t(field.label)}</label>
       {current !== undefined && <SchemaForm value={value} fields={field.fields || []} onChange={onChange} context={context} />}
@@ -48,7 +84,7 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
           <button type="button" disabled={i === items.length - 1} onClick={() => move(i + 1)}>{t('nodeOps.arrayDown')}</button>
           <button type="button" onClick={() => change(items.filter((_: unknown, n: number) => n !== i))}>{t('common.delete')}</button>
         </div>;
-      })}<button type="button" onClick={() => change([...items, structuredClone(field.defaults ?? {})])}>{t('nodeOps.arrayAdd')}</button></div>;
+      })}<button type="button" onClick={() => change([...items, structuredClone(typeof field.defaults === 'function' ? field.defaults(value) : field.defaults ?? {})])}>{t('nodeOps.arrayAdd')}</button></div>;
     }
     if (field.kind === 'keyValue') return <div key={key} className="sm:col-span-2"><span>{t(field.label)}</span>
       {Object.entries(current || {}).map(([name, entry], row) => <div key={row}>
@@ -79,6 +115,7 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
             change(input ? input.split(',').map(s => s.trim()).filter(Boolean).map(s => field.kind === 'numberList' ? Number(s) : s) : undefined);
           } else change(field.kind === 'number' && input !== '' ? Number(input) : input);
         }} />
+      {field.generate && <Generator kind={field.generate} onChange={change} />}
       {field.kind === 'combobox' && <datalist id={id}>{options.map(option => <option key={option} value={option} />)}</datalist>}
     </label>;
   };

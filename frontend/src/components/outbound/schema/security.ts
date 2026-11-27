@@ -3,7 +3,8 @@ import type { FieldDef, Outbound } from '../types';
 export const fingerprints = ['chrome', 'firefox', 'safari', 'ios', 'android', 'edge', '360', 'qq',
   'random', 'randomized', 'randomizednoalpn', 'unsafe'];
 const fields = (name: string, entries: [string, string, FieldDef['kind'], string[]?][]): FieldDef[] =>
-  entries.map(([key, label, kind, options]) => ({ path: ['streamSettings', `${name}Settings`, key], label, kind, options }));
+  entries.map(([key, label, kind, options]) => ({ path: ['streamSettings', `${name}Settings`, key], label, kind, options,
+    generate: key === 'shortId' ? 'shortId' : undefined }));
 export const securityFields: Record<string, FieldDef[]> = {
   none: [],
   tls: fields('tls', [
