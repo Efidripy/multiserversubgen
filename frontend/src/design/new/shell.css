@@ -83,8 +83,8 @@
 :root[data-design="new"] .sidebar--collapsed .sidebar__logo {
   flex-direction: column;
   justify-content: center;
-  gap: 0;
-  padding: 1px 0;
+  gap: 6px;
+  padding: 8px 0;
 }
 :root[data-design="new"] .sidebar--collapsed .sidebar__brand-lockup {
   opacity: 1;
@@ -94,7 +94,7 @@
   min-height: 28px;
   overflow: visible;
 }
-:root[data-design="new"] .sidebar--collapsed .sidebar__collapse-btn { width: 28px; height: 16px; }
+:root[data-design="new"] .sidebar--collapsed .sidebar__collapse-btn { width: 28px; height: 28px; }
 :root[data-design="new"] .sidebar__version-badge {
   border: 1px solid var(--ln-line);
   border-radius: var(--ln-r-xs);
@@ -135,11 +135,12 @@
   background: var(--ln-surface-hover);
   color: var(--ln-text);
 }
+/* The rail is too narrow for a corner badge: user icon and gear stack instead. */
 :root[data-design="new"] .sidebar__user-settings--collapsed {
-  right: 2px;
-  bottom: 1px;
-  width: 28px;
-  height: 28px;
+  position: static;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   margin: 0;
 }
 :root[data-design="new"] .sidebar__nav { gap: 4px; padding: 8px; }
@@ -209,7 +210,8 @@
 :root[data-design="new"] .sidebar--collapsed .sidebar__footer { padding: 8px; }
 :root[data-design="new"] .sidebar__footer-collapsed { gap: 8px; }
 :root[data-design="new"] .sidebar__collapsed-card,
-:root[data-design="new"] .sidebar__collapsed-back { width: 34px; height: 30px; }
+:root[data-design="new"] .sidebar__collapsed-back { width: 34px; height: 34px; }
+:root[data-design="new"] .sidebar__collapsed-card--user { flex-direction: column; gap: 8px; height: auto; border: 0; }
 
 :root[data-design="new"] .server-status__refresh-btn {
   border-color: var(--ln-line-strong) !important;
