@@ -1,0 +1,25 @@
+[data-node-operations].node-ops-overlay { background: color-mix(in srgb, var(--bg-primary) 75%, transparent); }
+[data-node-operations] .node-ops-panel { background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); }
+[data-node-operations] .modal-header, [data-node-operations] .node-ops-side { border-color: var(--border-color); }
+[data-node-operations] .node-ops-side { border-bottom: 1px solid var(--border-color); }
+@media (min-width: 1024px) { [data-node-operations] .node-ops-side { border-bottom: 0; border-right: 1px solid var(--border-color); } }
+[data-node-operations] .node-ops-selected { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+[data-node-operations] .node-ops-pre, [data-node-operations] .node-ops-chip, [data-node-operations] .node-ops-editor { background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 6px; }
+[data-node-operations] .node-ops-muted { color: var(--text-secondary); }
+[data-node-operations] .node-ops-error { color: var(--danger); }
+[data-node-operations] .node-ops-success { color: var(--success); }
+[data-node-operations] .node-ops-warning { color: var(--warning); }
+[data-node-operations] .node-ops-row { border-bottom: 1px solid var(--border-color); }
+[data-node-operations] .node-ops-bar { width: 6rem; height: 4px; margin-top: 4px; background: var(--bg-tertiary); }
+[data-node-operations] .node-ops-bar > div { height: 100%; background: var(--accent); }
+[data-node-operations] .node-ops-sort, [data-node-operations] .node-ops-more { border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; }
+[data-node-operations] .node-ops-more { color: var(--accent); text-decoration: underline; }
+.node-ops-popover { z-index: 10000; max-width: min(250px, calc(100vw - 16px)); max-height: 150px; overflow: auto; overflow-wrap: anywhere; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); box-shadow: 0 4px 16px color-mix(in srgb, var(--bg-primary) 50%, transparent); }
+[data-node-operations] .node-ops-panel { color-scheme: dark; }
+[data-node-operations] th { text-align: left; }
+/* The doubled attribute outranks both designs' shared button rules. */
+:root[data-design] [data-node-operations][data-node-operations] button[aria-pressed="true"],
+:root[data-design] [data-node-operations][data-node-operations] button[aria-current="page"],
+:root[data-design] [data-node-operations][data-node-operations] button.node-ops-selected {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-text);
+}

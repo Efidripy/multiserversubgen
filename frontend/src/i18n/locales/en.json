@@ -1931,6 +1931,8 @@
   }
 },
   "nodeOps": {
+    "observatoryHint": "Observatory regularly checks selected outbounds and shows whether each is alive and its latency. It is off by default: add these two blocks to Xray Config (Template). subjectSelector lists the starts of outbound tags to check. Saving may restart Xray.",
+    "showValues": "Show all {{count}} values",
     "editorLoading": "Loading code editor?",
     "jsonView": "JSON view",
     "invalidRule": "A rule needs an outbound or balancer and at least one condition.",
