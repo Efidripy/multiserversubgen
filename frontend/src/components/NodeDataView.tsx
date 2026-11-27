@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { LazyJsonEditor } from './LazyJsonEditor';
 import { getXrayTemplate, updateXrayTemplate } from '../api/serverOps';
 
 type Row = { email?: string; tag?: string; remark?: string; upload?: number; download?: number; up?: number; down?: number; total?: number; enable?: boolean };
@@ -53,7 +54,7 @@ export function NodeDataView({ nodeId, kind, data, loading, refresh, copy }: { n
     <div className="flex flex-wrap gap-2"><button type="button" className={button} aria-pressed={!json} onClick={() => setJson(false)}>{t('nodeOps.table')}</button><button type="button" className={button} aria-pressed={json} onClick={() => setJson(true)}>JSON</button><button type="button" className={button} disabled={loading} onClick={refresh}>{t('common.refresh')}</button><button type="button" className={button} disabled={data == null} onClick={copy}>{t('common.copy')}</button></div>
     {kind === 'outbounds' && <><button type="button" role="switch" aria-checked={enabled} className={`${button} self-start`} disabled={!template || busy} onClick={() => void toggle()}>{t('nodeOps.outboundStats')}: {t(enabled ? 'common.enabled' : 'common.disabled')}</button>{templateError && <div role="alert" className="text-sm text-rose-300">{templateError}</div>}</>}
     {unavailable && <div role="alert" className="text-sm text-rose-300">{String(payload.error || t('nodeOps.nodeUnavailable'))}</div>}
-    {json ? <pre className="min-h-0 flex-1 overflow-auto rounded border border-cyan-500/20 bg-[#07101d] p-3 text-xs text-slate-200">{JSON.stringify(data, null, 2) || t('common.noRecordsFound')}</pre> : !unavailable && <div className="min-h-0 flex-1 overflow-auto text-sm text-slate-200">
+    {json ? <LazyJsonEditor readOnly label={t('nodeOps.jsonView')} value={JSON.stringify(data, null, 2) || ''} /> : !unavailable && <div className="min-h-0 flex-1 overflow-auto text-sm text-slate-200">
       {kind === 'traffic' && <p className="mb-3">{t('nodeOps.overall')}: {bytes(clients.reduce((sum, row) => sum + (Number(row.total) || 0), 0))}</p>}
       {kind === 'online' && <p className="mb-3">{t('nodeOps.onlineCount', { count: online.length })}</p>}
       {kind !== 'outbounds' && <input className="mb-3 w-full rounded border border-cyan-500/20 bg-[#0a0e1a] p-2 text-slate-200" placeholder={t('nodeOps.search')} value={search} onChange={(e) => setSearch(e.target.value)} />}

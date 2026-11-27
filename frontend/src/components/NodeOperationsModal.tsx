@@ -19,6 +19,7 @@ import {
   setApiTokenEnabled,
   updatePanel,
 } from '../api/serverOps';
+import { LazyJsonEditor } from './LazyJsonEditor';
 import { XrayTemplateEditor } from './XrayTemplateEditor';
 import { SystemHistory } from './SystemHistory';
 import { NodeDataView } from './NodeDataView';
@@ -59,7 +60,7 @@ interface ApiTokenItem {
 type KeyKind = 'uuid' | 'x25519' | 'vless' | 'mldsa65';
 
 const overlayClass = 'fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-3 py-5';
-const panelClass = 'flex h-[min(92vh,820px)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-cyan-300/20 bg-[#0f1420] text-slate-100 shadow-2xl ring-1 ring-cyan-300/10';
+const panelClass = 'flex h-[min(92vh,820px)] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-cyan-300/20 bg-[#0f1420] text-slate-100 shadow-2xl ring-1 ring-cyan-300/10';
 const panelHeaderClass = 'flex min-w-0 items-start justify-between gap-4 border-b border-cyan-300/20 px-4 py-4 sm:px-5';
 const panelBodyClass = 'flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row';
 const sideClass = 'max-h-[28%] min-w-0 shrink-0 overflow-y-auto border-b border-cyan-300/20 p-3 lg:max-h-none lg:w-[220px] lg:border-b-0 lg:border-r lg:p-4';
@@ -346,7 +347,8 @@ export function NodeOperationsModal({
             </button>
           </div>
         </div>
-        <pre className={preClass}>{text || emptyLabel}</pre>
+        <LazyJsonEditor readOnly label={activeTabLabel} value={text || ''} />
+        {!text && <span className="text-slate-200">{emptyLabel}</span>}
       </div>
     );
   };
@@ -381,6 +383,7 @@ export function NodeOperationsModal({
             <button
               key={version}
               type="button"
+              aria-pressed={selectedVersion === version}
               className={`${buttonSecondaryClass} justify-start ${selectedVersion === version ? 'border-cyan-300/50 bg-cyan-400/10 text-cyan-200' : ''}`}
               onClick={() => setSelectedVersion(version)}
             >
@@ -524,6 +527,7 @@ export function NodeOperationsModal({
 
   return (
     <div
+      data-node-operations
       className={overlayClass}
       role="dialog"
       aria-modal="true"
@@ -550,6 +554,7 @@ export function NodeOperationsModal({
                 <button
                   key={tab.id}
                   type="button"
+                  aria-current={activeTab === tab.id ? 'page' : undefined}
                   className={`${buttonSecondaryClass} justify-start ${activeTab === tab.id ? 'border-cyan-300/50 bg-cyan-400/10 text-cyan-200' : ''}`}
                   onClick={() => setActiveTab(tab.id)}
                 >

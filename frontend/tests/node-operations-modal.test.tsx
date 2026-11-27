@@ -34,6 +34,8 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: translate }),
 }));
 
+vi.mock('../src/components/LazyJsonEditor', () => ({ LazyJsonEditor: ({ value, label }: { value: string; label: string }) => <pre aria-label={label}>{value}</pre> }));
+
 vi.mock('../src/components/Toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
