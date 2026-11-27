@@ -1,0 +1,7 @@
+[role='log'] .log-stamp { color: var(--ln-info, var(--accent)); }
+[role='log'] :is(.log-info, .log-notice, .log-direct) { color: var(--success); }
+[role='log'] .log-warning { color: var(--warning); }
+[role='log'] :is(.log-error, .log-blocked) { color: var(--danger); }
+[role='log'] :is(.log-debug, .log-proxy) { color: var(--ln-info, var(--accent)); }
+[role='log'] .log-service { font-weight: 700; color: var(--text-primary); }
+[role='log'] .log-key { opacity: 0.55; }
