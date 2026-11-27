@@ -646,7 +646,7 @@ class InboundManager:
             replacement = copy.deepcopy(value[key])
             if key == "settings":
                 replacement.pop("clients", None)
-                clients = _decode_inbound_object(current.get("settings"))
+                clients = _decode_inbound_object(current.get("settings")) or {}
                 if "clients" in clients:
                     replacement["clients"] = clients["clients"]
             if key in ("settings", "streamSettings", "sniffing") and isinstance(current.get(key), str):
