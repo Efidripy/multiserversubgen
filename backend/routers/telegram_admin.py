@@ -837,6 +837,9 @@ def build_telegram_admin_router(
     @router.post("/api/v1/telegram/customers/{customer_id}/nodes/{node_id}/add")
     def add_customer_node(customer_id: int, node_id: int, request: Request, data: Dict):
         username = require_admin(request)
+        notify = data.get("notify", True)
+        if not isinstance(notify, bool):
+            raise HTTPException(status_code=422, detail="notify must be a boolean")
         try:
             result = registry.queue_customer_node_add(
                 customer_id=customer_id,
@@ -844,6 +847,7 @@ def build_telegram_admin_router(
                 expected_customer_version=data.get("expected_customer_version"),
                 idempotency_key=data.get("idempotency_key"),
                 created_by=username,
+                notify=notify,
             )
         except (VersionConflictError, IdempotencyConflictError, NodePolicyUnavailableError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -187,3 +187,5 @@ second browser tab either replays the same result or receives a conflict.
 Set `TELEGRAM_BOT_ENABLED=false`, stop the adapter/worker and roll back only
 the application release. Additive tables and already-created remote records are
 preserved; database restore requires a separately approved recovery procedure.
+
+При ручном добавлении клиента на ноду администратор выбирает, отправлять ли Telegram-уведомление; по умолчанию оно включено. Выбор сохраняется в provisioning job и применяется после успешного выполнения.

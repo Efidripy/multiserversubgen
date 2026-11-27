@@ -486,10 +486,10 @@ export async function repairCustomer(customerId: number): Promise<CustomerRepair
   return response.data as CustomerRepairResult;
 }
 
-export async function addCustomerNode(customer: TelegramCustomer, nodeId: number): Promise<void> {
+export async function addCustomerNode(customer: TelegramCustomer, nodeId: number, notify = true): Promise<void> {
   await api.post(
     `/v1/telegram/customers/${customer.customer_id}/nodes/${nodeId}/add`,
-    { expected_customer_version: customer.row_version, idempotency_key: newIdempotencyKey() },
+    { expected_customer_version: customer.row_version, idempotency_key: newIdempotencyKey(), notify },
     { auth: getAuth() },
   );
 }

@@ -1017,6 +1017,7 @@ def init_db(db_path: str) -> None:
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       customer_id INTEGER NOT NULL,
                       trigger TEXT NOT NULL CHECK(trigger IN ('approve_new', 'manual_sync', 'node_backfill')),
+                      notify_user INTEGER NOT NULL DEFAULT 1,
                       idempotency_key TEXT NOT NULL UNIQUE,
                       status TEXT NOT NULL DEFAULT 'queued'
                         CHECK(status IN ('queued', 'running', 'partial', 'succeeded', 'failed', 'cancelled')),
@@ -1039,6 +1040,8 @@ def init_db(db_path: str) -> None:
         provisioning_job_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(telegram_provisioning_jobs)").fetchall()
         }
+        if "notify_user" not in provisioning_job_columns:
+            conn.execute("ALTER TABLE telegram_provisioning_jobs ADD COLUMN notify_user INTEGER NOT NULL DEFAULT 1")
         if "hidden_at" not in provisioning_job_columns:
             conn.execute("ALTER TABLE telegram_provisioning_jobs ADD COLUMN hidden_at TIMESTAMP NULL")
         if "row_version" not in provisioning_job_columns:

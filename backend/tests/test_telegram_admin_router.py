@@ -698,3 +698,19 @@ def test_telegram_workers_route_structure(tmp_path):
 
 def test_telegram_workers_route_requires_capability(tmp_path):
     assert _build_client(tmp_path, role="viewer").get("/api/v1/telegram/workers").status_code == 403
+
+
+def test_add_customer_node_notify_validation_and_persistence(tmp_path):
+    client = _build_client(tmp_path)
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(email_display="notify-user", origin="manual", email_source="admin", public_code="notify-user")
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
+    url = f"/api/v1/telegram/customers/{customer_id}/nodes/1/add"
+    payload = {"expected_customer_version": 1, "idempotency_key": "notify-web"}
+    for invalid in (0, 1, "false", None):
+        assert client.post(url, json={**payload, "notify": invalid}).status_code == 422
+    assert client.post(url, json={**payload, "notify": False}).status_code == 200
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT notify_user FROM telegram_provisioning_jobs").fetchone()[0] == 0

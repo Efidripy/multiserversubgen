@@ -1349,7 +1349,8 @@ def test_customer_lifecycle_preview_queues_exact_targets_once_and_never_performs
     assert stored == ("remote-uuid", "remote-sub")
 
 
-def test_customer_node_add_queues_only_the_selected_eligible_node(tmp_path):
+@pytest.mark.parametrize("notify", [True, False])
+def test_customer_node_add_queues_only_the_selected_eligible_node(tmp_path, notify):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     _insert_node(db_path, 1, "edge-a")
@@ -1367,19 +1368,20 @@ def test_customer_node_add_queues_only_the_selected_eligible_node(tmp_path):
         node_id=1,
         expected_customer_version=1,
         idempotency_key="node-add-1",
-        created_by="admin",
+        created_by="admin", notify=notify,
     )
     replay = registry.queue_customer_node_add(
         customer_id=customer_id,
         node_id=1,
         expected_customer_version=1,
         idempotency_key="node-add-1",
-        created_by="another-admin",
+        created_by="another-admin", notify=notify,
     )
 
     assert result == replay
     assert result.status == "queued"
     with connect(db_path) as conn:
+        assert conn.execute("SELECT notify_user FROM telegram_provisioning_jobs WHERE id = ?", (result.job_id,)).fetchone()[0] == int(notify)
         assert conn.execute(
             "SELECT node_id FROM telegram_provisioning_attempts WHERE job_id = ?", (result.job_id,)
         ).fetchone()[0] == 1
@@ -1387,7 +1389,8 @@ def test_customer_node_add_queues_only_the_selected_eligible_node(tmp_path):
     assert {(item.node_id, item.state) for item in matrix} == {(1, "available_to_add")}
 
 
-def test_node_bulk_actions_are_confirmation_gated_scoped_and_idempotent(tmp_path):
+@pytest.mark.parametrize("notify", [True, False])
+def test_node_bulk_actions_are_confirmation_gated_scoped_and_idempotent(tmp_path, notify):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     _insert_node(db_path, 1, "edge-a")
@@ -1438,12 +1441,14 @@ def test_node_bulk_actions_are_confirmation_gated_scoped_and_idempotent(tmp_path
     assert add_preview.target_count == 1
     add_result = registry.queue_node_bulk_action(
         admin_telegram_user_id=100000001, node_id=1, action="add_all",
-        idempotency_key="bulk-add-edge-a", created_by="telegram:100000001",
+        idempotency_key="bulk-add-edge-a", created_by="telegram:100000001", notify=notify,
     )
     assert add_result.queued_count == 1
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT notify_user FROM telegram_provisioning_jobs WHERE trigger = 'node_backfill'").fetchone()[0] == int(notify)
     assert registry.queue_node_bulk_action(
         admin_telegram_user_id=100000001, node_id=1, action="add_all",
-        idempotency_key="bulk-add-edge-a", created_by="telegram:100000001",
+        idempotency_key="bulk-add-edge-a", created_by="telegram:100000001", notify=notify,
     ) == add_result
 
     remove_preview = registry.begin_node_bulk_action_preview(

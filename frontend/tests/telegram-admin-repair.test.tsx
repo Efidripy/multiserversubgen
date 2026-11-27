@@ -5,7 +5,7 @@ import ru from '../src/i18n/locales/ru.json';
 const api = vi.hoisted(() => ({
   listTelegramCustomers: vi.fn(), listTelegramJobsPage: vi.fn(), getCustomerNodes: vi.fn(),
   getCustomerOperations: vi.fn(), getCustomerTraffic: vi.fn(), getCustomerTags: vi.fn(),
-  getCustomerTimeline: vi.fn(), repairCustomer: vi.fn(), getTelegramAttention: vi.fn(), getTelegramHistoryOverview: vi.fn(),
+  getCustomerTimeline: vi.fn(), addCustomerNode: vi.fn(), repairCustomer: vi.fn(), getTelegramAttention: vi.fn(), getTelegramHistoryOverview: vi.fn(),
   getTelegramDashboard: vi.fn(), listLifecycleSchedules: vi.fn(), listDriftFindings: vi.fn(),
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values: Record<string, string> = {}) => {
@@ -31,6 +31,21 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe('TelegramAdmin repair and attention', () => {
+  it('defaults node notifications on and sends the selected value', async () => {
+    api.getCustomerNodes.mockResolvedValue([{ node_id: 1, node_name: 'Edge', state: 'available_to_add' }]);
+    api.addCustomerNode.mockResolvedValue(undefined);
+    render(<TelegramAdmin />);
+    fireEvent.click((await screen.findAllByText('customer@example.test'))[0]);
+    fireEvent.click(await screen.findByRole('button', { name: ru.telegram.addNode }));
+    const checkbox = screen.getByRole('checkbox', { name: ru.telegram.notifyNodeAdd }) as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole('button', { name: ru.common.confirm }));
+    await waitFor(() => expect(api.addCustomerNode).toHaveBeenCalledWith(customer, 1, false));
+    fireEvent.click(await screen.findByRole('button', { name: ru.telegram.addNode }));
+    expect((screen.getByRole('checkbox', { name: ru.telegram.notifyNodeAdd }) as HTMLInputElement).checked).toBe(true);
+  });
+
   it('repairs a customer and displays the fixed item and remaining problems', async () => {
     api.repairCustomer.mockResolvedValue({ fixed: ['remote_snapshot_ready'], problems: [{ code: 'binding_missing', node_name: 'Test node' }, { code: 'identity_not_approved' }] });
     render(<TelegramAdmin />);

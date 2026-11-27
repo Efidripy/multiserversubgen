@@ -143,6 +143,7 @@
     "addNodeDialogTitle": "Add to node",
     "suspendNode": "Pause",
     "resumeNode": "Enable",
+    "notifyNodeAdd": "Notify the client in Telegram",
     "addNodeConfirm": "Add the user to node “{{node}}”?",
     "nodeQueued": "Queued",
     "nodeReady": "Ready",
