@@ -58,8 +58,8 @@ export function OutboundEditor({ initial, tags, onApply, onCancel }: {
     if (next.mux?.enabled === false) delete next.mux;
     update(next);
   };
-  return <div className="flex min-h-0 flex-1 flex-col gap-2">
-    <div className="flex flex-wrap gap-2"><input className="form-control" aria-label={t('nodeOps.shareLink')}
+  return <div className="outbound-editor flex min-h-0 flex-1 flex-col gap-2">
+    <div className="flex flex-wrap items-center gap-2"><input className="form-control w-auto min-w-0 flex-1" aria-label={t('nodeOps.shareLink')}
       placeholder={t('nodeOps.shareLink')} value={link} onChange={event => setLink(event.target.value)} />
       <button type="button" className={button} onClick={() => {
         try {
@@ -71,9 +71,9 @@ export function OutboundEditor({ initial, tags, onApply, onCancel }: {
       }}>{t('nodeOps.import')}</button></div>
     {message && <div role="alert">{message}</div>}
     <div className="flex flex-wrap gap-2">
-      <button type="button" className={`seg-tab ${mode === 'form' ? 'seg-tab--active' : ''}`}
+      <button type="button" aria-pressed={mode === 'form'} className={`seg-tab ${mode === 'form' ? 'seg-tab--active' : ''}`}
         disabled={!valid || !protocols.includes(draft.protocol)} onClick={() => setMode('form')}>{t('nodeOps.form')}</button>
-      <button type="button" className={`seg-tab ${mode === 'json' ? 'seg-tab--active' : ''}`} onClick={() => setMode('json')}>JSON</button>
+      <button type="button" aria-pressed={mode === 'json'} className={`seg-tab ${mode === 'json' ? 'seg-tab--active' : ''}`} onClick={() => setMode('json')}>JSON</button>
       <button type="button" className={button} disabled={!unique} onClick={() => { if (unique) onApply(draft); }}>
         {t('nodeOps.applyDraft')}</button>
       <button type="button" className={button} onClick={onCancel}>{t('common.cancel')}</button>

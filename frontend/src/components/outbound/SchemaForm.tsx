@@ -44,7 +44,7 @@ function Generator({ kind, onChange }: { kind: NonNullable<FieldDef['generate']>
     const bytes = crypto.getRandomValues(new Uint8Array(16));
     onChange(Array.from(bytes, b => chars[b % chars.length]).join(''));
   };
-  return <span><button type="button" onClick={() => void generate()}>Regenerate</button>
+  return <span><button type="button" className="btn btn-sm btn-ghost-secondary" onClick={() => void generate()}>Regenerate</button>
     {publicKey && <output>Public Key: {publicKey}</output>}</span>;
 }
 
@@ -80,11 +80,11 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
         const move = (j: number) => { const next = [...items]; [next[i], next[j]] = [next[j], next[i]]; change(next); };
         return <div key={i}><SchemaForm value={value} fields={field.fields || []} onChange={onChange}
           context={{ path: [...path, i], value: item, index: i }} />
-          <button type="button" disabled={i === 0} onClick={() => move(i - 1)}>{t('nodeOps.arrayUp')}</button>
-          <button type="button" disabled={i === items.length - 1} onClick={() => move(i + 1)}>{t('nodeOps.arrayDown')}</button>
-          <button type="button" onClick={() => change(items.filter((_: unknown, n: number) => n !== i))}>{t('common.delete')}</button>
+          <button type="button" className="btn btn-sm btn-ghost-secondary" disabled={i === 0} onClick={() => move(i - 1)}>{t('nodeOps.arrayUp')}</button>
+          <button type="button" className="btn btn-sm btn-ghost-secondary" disabled={i === items.length - 1} onClick={() => move(i + 1)}>{t('nodeOps.arrayDown')}</button>
+          <button type="button" className="btn btn-sm btn-ghost-secondary" onClick={() => change(items.filter((_: unknown, n: number) => n !== i))}>{t('common.delete')}</button>
         </div>;
-      })}<button type="button" onClick={() => change([...items, structuredClone(typeof field.defaults === 'function' ? field.defaults(value) : field.defaults ?? {})])}>{t('nodeOps.arrayAdd')}</button></div>;
+      })}<button type="button" className="btn btn-sm btn-ghost-secondary" onClick={() => change([...items, structuredClone(typeof field.defaults === 'function' ? field.defaults(value) : field.defaults ?? {})])}>{t('nodeOps.arrayAdd')}</button></div>;
     }
     if (field.kind === 'keyValue') return <div key={key} className="sm:col-span-2"><span>{t(field.label)}</span>
       {Object.entries(current || {}).map(([name, entry], row) => <div key={row}>
@@ -92,8 +92,8 @@ export function SchemaForm({ value, fields, onChange, context }: Props) {
           const next = { ...current }; delete next[name]; next[event.target.value] = entry; change(next);
         }} />
         <input aria-label={t('nodeOps.value')} value={String(entry)} onChange={event => change({ ...current, [name]: event.target.value })} />
-        <button type="button" onClick={() => { const next = { ...current }; delete next[name]; change(next); }}>{t('common.delete')}</button>
-      </div>)}<button type="button" onClick={() => { let name = ''; while (name in (current || {})) name += '_';
+        <button type="button" className="btn btn-sm btn-ghost-secondary" onClick={() => { const next = { ...current }; delete next[name]; change(next); }}>{t('common.delete')}</button>
+      </div>)}<button type="button" className="btn btn-sm btn-ghost-secondary" onClick={() => { let name = ''; while (name in (current || {})) name += '_';
         change({ ...current, [name]: '' }); }}>{t('nodeOps.arrayAdd')}</button></div>;
     if (field.kind === 'json') return <label key={key} className="flex flex-col gap-1"><span>{t(field.label)}</span>
       <JsonField value={current} onChange={change} label={t(field.label)} /></label>;
