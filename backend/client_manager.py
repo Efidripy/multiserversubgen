@@ -88,11 +88,20 @@ def _client_matches_identifier(client: Dict, identifier: str) -> bool:
     if not password:
         return False
     computed = trojan_public_identifier(
-        client.get("node_id"),
-        client.get("inbound_id"),
-        client.get("email"),
+        client.get("node_id"), client.get("inbound_id"), client.get("email"),
     )
     return bool(computed and hmac.compare_digest(identifier, computed))
+
+
+_RECORD_RUNTIME_FIELDS = frozenset({
+    "up", "down", "total", "traffic", "lastOnline", "createdAt", "updatedAt",
+    "online", "onlineAt", "lastSeen", "inboundIds", "inboundId",
+})
+
+
+def _editable_record(record: Dict, version: str) -> Dict:
+    excluded = _RECORD_RUNTIME_FIELDS | ({"id"} if version == "v3" else set())
+    return {key: value for key, value in record.items() if key not in excluded}
 
 
 def _requests_verify_value():
@@ -490,7 +499,7 @@ class ClientManager:
             "security", "password", "flow", "auth", "privateKey", "publicKey",
             "preSharedKey", "keepAlive", "secret", "adTag", "email", "limitIp",
             "totalGB", "expiryTime", "enable", "tgId", "subId", "group",
-            "comment", "reset",
+            "comment", "reset", "limitHwid", "trafficReset", "trafficResetDay",
         )
         for field in preserved_fields:
             if field in existing:
@@ -498,7 +507,8 @@ class ClientManager:
 
         if existing.get("uuid"):
             payload["id"] = existing["uuid"]
-        elif existing.get("id"):
+        elif isinstance(existing.get("id"), str) and existing["id"]:
+            # A numeric id is the database row, never the client identity.
             payload["id"] = existing["id"]
 
         for field in ("reverse", "allowedIPs"):
@@ -567,8 +577,8 @@ class ClientManager:
             if res.status_code in (404, 405):
                 return None  # v2 fallback
             return self._xui_success(res)
-        except Exception as exc:
-            logger.warning("v3 update_client failed: %s", exc)
+        except Exception:
+            logger.warning("v3 update_client failed")
             return False
 
     def _delete_client_v3(self, s, base_url: str, client_identifier: str,
@@ -1162,7 +1172,10 @@ class ClientManager:
             if not isinstance(clients, list):
                 return None
             for client in clients:
-                if isinstance(client, dict) and _client_matches_identifier(client, identifier):
+                if not isinstance(client, dict):
+                    continue
+                opaque = trojan_public_identifier(node.get("id"), inbound_id, client.get("email"))
+                if _client_matches_identifier(client, identifier) or identifier == opaque:
                     return ("v3", client, None, None)
             return None
         response = xui_request(session, "GET", f"{base_url}/panel/api/inbounds/list")
@@ -1201,20 +1214,24 @@ class ClientManager:
             if not record:
                 return "failed"
             version, current, inbound, index = record
-            if current != expected:
+            if _editable_record(current, version) != _editable_record(expected, version):
                 return "conflict"
-            if value == expected:
+            if _editable_record(value, version) == _editable_record(expected, version):
                 return "ok"
-            protected = ("up", "down", "total", "createdAt", "updatedAt")
-            replacement = {key: val for key, val in value.items() if key not in protected}
-            replacement.update({key: current[key] for key in protected if key in current})
+            replacement = _editable_record(value, version)
             if version == "v3":
-                # The list projection uses uuid for the client identity and id for the database row.
-                if "uuid" in replacement:
-                    replacement["id"] = replacement.pop("uuid")
+                # The mutation accepts the client UUID as id, never the database row id.
+                # Keep every field the panel returned, not only the ones partial updates know about.
+                replacement = {**replacement, **self._v3_update_payload(replacement, {})}
+                replacement.pop("uuid", None)
+                if not current.get("email") or not replacement.get("email"):
+                    return "failed"
                 url = f"{base_url}/panel/api/clients/update/{_path_segment(str(current.get('email') or ''))}"
                 response = xui_request(session, "POST", url, json=replacement)
             else:
+                if inbound is None or index is None:
+                    return "failed"
+                replacement.update({key: current[key] for key in _RECORD_RUNTIME_FIELDS if key in current})
                 settings = json.loads(inbound.get("settings") or "{}")
                 settings["clients"][index] = replacement
                 payload = dict(inbound)
