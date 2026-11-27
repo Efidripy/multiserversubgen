@@ -519,10 +519,22 @@ class ThreeXUIMonitor:
             }
             for ib in result.get("inbounds", [])
         ]
+        clients = {}
+        for inbound in result.get("inbounds", []):
+            for stat in inbound.get("clientStats") or []:
+                if not isinstance(stat, dict) or not stat.get("email"):
+                    continue
+                upload = stat.get("up") or 0
+                download = stat.get("down") or 0
+                client = {"email": stat["email"], "upload": upload, "download": download,
+                          "total": upload + download, "enable": stat.get("enable", True)}
+                if stat["email"] not in clients or client["total"] > clients[stat["email"]]["total"]:
+                    clients[stat["email"]] = client
         return {
             "node": node["name"],
             "available": True,
             "traffic": traffic,
+            "clients": list(clients.values()),
         }
 
     def get_online_clients(self, node: Dict) -> Dict:

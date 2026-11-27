@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn(), history: vi.fn() }));
 vi.mock('../src/api/serverOps', () => ({ getXrayTemplate: mocks.get, updateXrayTemplate: mocks.update, getServerHistory: mocks.history }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
+vi.mock('../src/components/LazyJsonEditor', () => ({ LazyJsonEditor: ({ value, onChange, label }: any) => <textarea aria-label={label} value={value} onChange={(e) => onChange?.(e.target.value)} /> }));
 vi.mock('react-chartjs-2', () => ({ Line: () => <div data-testid="chart" /> }));
 import { XrayTemplateEditor } from '../src/components/XrayTemplateEditor';
 import { SystemHistory } from '../src/components/SystemHistory';
@@ -12,6 +13,7 @@ it('validates edits and preserves them after a failed save', async () => {
   mocks.update.mockRejectedValue(new Error('changed'));
   vi.spyOn(window, 'confirm').mockReturnValue(true);
   render(<XrayTemplateEditor nodeId={1} section="routing" />);
+  fireEvent.click(await screen.findByText('JSON'));
   const input = await screen.findByLabelText('nodeOps.template') as HTMLTextAreaElement;
   await waitFor(() => expect(input.value).toContain('rules'));
   const save = screen.getByText('nodeOps.saveApply') as HTMLButtonElement;
