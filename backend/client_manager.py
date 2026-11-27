@@ -1154,6 +1154,76 @@ class ClientManager:
         
         return {"results": results}
     
+    def _read_client_record(self, session, base_url, node, inbound_id, identifier):
+        response = xui_request(session, "GET", f"{base_url}/panel/api/clients/list")
+        if response.status_code not in (404, 405):
+            data = response.json() if response.status_code == 200 else None
+            clients = data.get("obj") if isinstance(data, dict) and data.get("success") else None
+            if not isinstance(clients, list):
+                return None
+            for client in clients:
+                if isinstance(client, dict) and _client_matches_identifier(client, identifier):
+                    return ("v3", client, None, None)
+            return None
+        response = xui_request(session, "GET", f"{base_url}/panel/api/inbounds/list")
+        data = response.json() if response.status_code == 200 else None
+        inbounds = data.get("obj") if isinstance(data, dict) and data.get("success") else None
+        if not isinstance(inbounds, list):
+            return None
+        for inbound in inbounds:
+            if not isinstance(inbound, dict) or inbound.get("id") != inbound_id:
+                continue
+            settings = json.loads(inbound.get("settings") or "{}")
+            for index, client in enumerate(settings.get("clients", [])):
+                opaque = trojan_public_identifier(node.get("id"), inbound_id, client.get("email"))
+                if _client_matches_identifier(client, identifier) or identifier == opaque:
+                    return ("v2", client, inbound, index)
+        return None
+
+    def read_client_record(self, node, inbound_id, identifier):
+        try:
+            session, base_url = self._get_session(node)
+            if not session:
+                return None
+            record = self._read_client_record(session, base_url, node, inbound_id, identifier)
+            return record[1] if record else None
+        except Exception:
+            return None
+
+    def replace_client_record(self, node, inbound_id, identifier, expected, value):
+        if self._is_read_only(node):
+            return "read_only"
+        try:
+            session, base_url = self._get_session(node)
+            if not session:
+                return "failed"
+            record = self._read_client_record(session, base_url, node, inbound_id, identifier)
+            if not record:
+                return "failed"
+            version, current, inbound, index = record
+            if current != expected:
+                return "conflict"
+            if value == expected:
+                return "ok"
+            protected = ("up", "down", "total", "createdAt", "updatedAt")
+            replacement = {key: val for key, val in value.items() if key not in protected}
+            replacement.update({key: current[key] for key in protected if key in current})
+            if version == "v3":
+                # The list projection uses uuid for the client identity and id for the database row.
+                if "uuid" in replacement:
+                    replacement["id"] = replacement.pop("uuid")
+                url = f"{base_url}/panel/api/clients/update/{_path_segment(str(current.get('email') or ''))}"
+                response = xui_request(session, "POST", url, json=replacement)
+            else:
+                settings = json.loads(inbound.get("settings") or "{}")
+                settings["clients"][index] = replacement
+                payload = dict(inbound)
+                payload["settings"] = json.dumps(settings, ensure_ascii=False)
+                response = xui_request(session, "POST", f"{base_url}/panel/api/inbounds/update/{inbound_id}", json=payload)
+            return "ok" if self._xui_success(response) else "failed"
+        except Exception:
+            return "failed"
+
     def update_client(self, node: Dict, inbound_id: int, client_uuid: str, updates: Dict) -> bool:
         if self._is_read_only(node):
             logger.info(f"Skip update client on read-only node {node['name']}")
