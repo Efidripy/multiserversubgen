@@ -15,6 +15,7 @@ from services.db_bootstrap import connect
 from core.lifecycle_work import LifecycleWorkAdmissionClosed
 from services.snapshot_push import build_snapshot_push_payload, redact_snapshot
 from services.system_clients import normalize_email, system_client_emails_from_inbounds
+from utils import parse_field_as_dict
 from services.xray_compatibility import summarize_node_inbounds
 from xui_session import (
     XUI_CONNECT_TIMEOUT_SEC,
@@ -311,6 +312,24 @@ class SnapshotCollector:
             "count": len(nodes),
             "mode": self._mode.value,
         }
+
+    def inbound_metadata(self, node_id) -> Dict:
+        """Return only display metadata from the latest in-memory snapshot."""
+        snapshot = self._latest["nodes"].get(self._node_key({"id": node_id}))
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("inbounds"), list):
+            return {}
+        result = {}
+        for inbound in snapshot["inbounds"]:
+            if not isinstance(inbound, dict) or inbound.get("id") is None:
+                continue
+            stream = parse_field_as_dict(inbound.get("streamSettings"), node_id=node_id, field_name="streamSettings")
+            result[str(inbound["id"])] = {
+                "protocol": inbound.get("protocol"),
+                "inbound_remark": inbound.get("remark", ""),
+                "security": inbound.get("security") or stream.get("security") or "",
+                "network": stream.get("network", ""),
+            }
+        return result
 
     def filter_reachable_nodes(self, nodes: List[Dict]) -> List[Dict]:
         """Exclude nodes persistently unavailable according to the collector."""

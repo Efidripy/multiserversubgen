@@ -288,3 +288,35 @@ def test_node_service_persists_tags_as_json(tmp_path):
 
     assert runtime_updated["tags"] == '["edge", "beta"]'
     assert comma_updated["tags"] == '["core", "vpn"]'
+
+
+def test_client_list_enriches_from_snapshot_without_mutating_cache(tmp_path):
+    from copy import deepcopy
+    from services.collector import SnapshotCollector
+
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    nodes = [{"id": 1, "name": "alpha"}]
+    cached = [{"id": "client-1", "email": "one@test.local", "node_id": 1, "inbound_id": 11, "node_name": "alpha"}]
+    original = deepcopy(cached)
+    collector = SnapshotCollector(fetch_nodes=lambda: nodes, xui_monitor=None, ws_manager=None)
+    app = FastAPI()
+    app.include_router(build_clients_router(
+        check_auth=lambda request: "admin", client_mgr=_ClientManagerStub(), db_path=db_path,
+        get_cached_clients=lambda _nodes, email_filter=None: cached, node_service=_NodeServiceStub(nodes),
+        get_node_or_404=lambda node_id: nodes[0], invalidate_live_stats_cache=lambda: None,
+        invalidate_subscription_cache=lambda: None, ws_manager=_WsManagerStub(),
+        get_inbound_metadata=collector.inbound_metadata,
+    ))
+    client = TestClient(app)
+    client.put("/api/v1/clients/client-1/notes", json={"node_id": 1, "inbound_id": 11, "email": "one@test.local", "notes": "note"})
+    before = client.get("/api/v1/clients").json()["clients"][0]
+    assert before["id"] == "client-1" and before["notes"] == "note"
+    assert not before.get("protocol")
+    collector._latest["nodes"]["id:1"] = {"inbounds": [{"id": 11, "protocol": "vless", "remark": "main", "streamSettings": '{"security":"tls","network":"ws"}'}]}
+    assert collector.inbound_metadata(1)["11"]["security"] == "tls"
+    after = client.get("/api/v1/clients").json()["clients"][0]
+    assert after["id"] == "client-1" and after["notes"] == "note"
+    assert after["protocol"] == "vless" and after["inbound_remark"] == "main" and after["network"] == "ws"
+    assert not after.get("security")
+    assert cached == original

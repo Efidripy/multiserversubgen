@@ -304,3 +304,12 @@ def test_telegram_drift_scan_interval_settings(monkeypatch):
     assert load_app_settings(parse_mfa_users=_parse_mfa_users).telegram.drift_auto_sync is False
     monkeypatch.setenv("TELEGRAM_DRIFT_SCAN_INTERVAL_SEC", "0")
     assert load_app_settings(parse_mfa_users=_parse_mfa_users).telegram.drift_scan_interval_sec == 0
+
+
+def test_clients_cache_ttl_defaults(monkeypatch):
+    monkeypatch.setenv("REQUIRE_PERSISTENT_SECRETS", "false")
+    monkeypatch.delenv("CLIENTS_CACHE_TTL", raising=False)
+    monkeypatch.delenv("CLIENTS_CACHE_STALE_TTL", raising=False)
+    settings = load_app_settings(parse_mfa_users=_parse_mfa_users)
+    assert settings.clients_cache_ttl == 20
+    assert settings.clients_cache_stale_ttl == 900
