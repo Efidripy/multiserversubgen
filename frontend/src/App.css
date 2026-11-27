@@ -620,7 +620,7 @@
   }
 
   .sidebar--collapsed .sidebar__footer {
-    padding: 0 8px 12px;
+    padding: 10px 8px 12px;
   }
 
   .sidebar__footer-collapsed {
