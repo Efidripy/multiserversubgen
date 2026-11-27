@@ -54,6 +54,9 @@ export function clientFields(protocol: string, record: object): FieldDef[] {
     { path: ['trafficResetDay'], label: 'Traffic reset day', kind: 'number' },
     { path: ['reverse', 'tag'], label: 'Reverse tag', kind: 'text' },
   );
+  if ('resetDay' in client) fields.push({ path: ['resetDay'], label: 'Reset day', kind: 'number' });
+  if ('resetWeekday' in client) fields.push({ path: ['resetWeekday'], label: 'Reset weekday', kind: 'number' });
+  if ('resetMax' in client) fields.push({ path: ['resetMax'], label: 'Reset max', kind: 'number' });
   if (protocol === 'wireguard') fields.push(
     { path: ['privateKey'], label: 'Private key', kind: 'text' },
     { path: ['publicKey'], label: 'Public key', kind: 'text' },
