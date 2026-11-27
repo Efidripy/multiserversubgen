@@ -593,6 +593,68 @@ class InboundManager:
             return False
     
     
+    _EDIT_FIELDS = ("remark", "enable", "listen", "port", "protocol", "settings", "streamSettings", "sniffing")
+
+    @classmethod
+    def _edit_projection(cls, current: Dict) -> Dict:
+        value = {key: copy.deepcopy(current[key]) for key in cls._EDIT_FIELDS if key in current}
+        for key in ("settings", "streamSettings", "sniffing"):
+            decoded = _decode_inbound_object(current.get(key))
+            if decoded is None:
+                raise ValueError("Invalid inbound configuration from node")
+            value[key] = decoded
+        value["settings"].pop("clients", None)
+        return value
+
+    def _edit_session(self, node: Dict):
+        session = requests.Session()
+        session.verify = _requests_verify_value()
+        base_url = build_panel_base_url(node)
+        username, password, token = extract_node_auth(node, self.decrypt)
+        if not login_panel(session, base_url, username, password, bearer_token=token):
+            raise ValueError("Node authentication failed")
+        return session, base_url
+
+    def _edit_read(self, session, base_url: str, inbound_id: int) -> Dict:
+        response = xui_request(session, "GET", f"{base_url}/panel/api/inbounds/list")
+        if response.status_code != 200:
+            raise ValueError("Node read failed")
+        data = response.json()
+        if not data.get("success") or not isinstance(data.get("obj"), list):
+            raise ValueError("Node read failed")
+        current = next((item for item in data["obj"] if item.get("id") == inbound_id), None)
+        if current is None:
+            raise ValueError("Inbound not found on node")
+        return current
+
+    def read_edit_config(self, node: Dict, inbound_id: int) -> Dict:
+        session, base_url = self._edit_session(node)
+        return self._edit_projection(self._edit_read(session, base_url, inbound_id))
+
+    def replace_edit_config(self, node: Dict, inbound_id: int, value: Dict, expected: Dict) -> bool:
+        if self._is_read_only(node):
+            raise PermissionError("Node is read-only")
+        session, base_url = self._edit_session(node)
+        current = self._edit_read(session, base_url, inbound_id)
+        if self._edit_projection(current) != expected:
+            raise RuntimeError("Inbound changed on node")
+        payload = copy.deepcopy(current)
+        for key in self._EDIT_FIELDS:
+            if key not in value:
+                payload.pop(key, None)
+                continue
+            replacement = copy.deepcopy(value[key])
+            if key == "settings":
+                replacement.pop("clients", None)
+                clients = _decode_inbound_object(current.get("settings"))
+                if "clients" in clients:
+                    replacement["clients"] = clients["clients"]
+            if key in ("settings", "streamSettings", "sniffing") and isinstance(current.get(key), str):
+                replacement = json.dumps(replacement, ensure_ascii=False)
+            payload[key] = replacement
+        response = xui_request(session, "POST", f"{base_url}/panel/api/inbounds/update/{inbound_id}", json=payload)
+        return self._xui_success(response)
+
     def update_inbound(self, node: Dict, inbound_id: int, updates: Dict) -> bool:
         if self._is_read_only(node):
             logger.info(f"Skip update inbound on read-only node {node['name']}")
